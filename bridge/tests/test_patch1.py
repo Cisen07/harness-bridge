@@ -1,5 +1,8 @@
 """Patch 1: offline tests; no launchctl operations or external requests."""
 import email.message
+import contextlib
+import io
+import sys
 import importlib.util
 import ipaddress
 import json
@@ -83,9 +86,11 @@ class Patch1(unittest.TestCase):
                 new.write_bytes(b'new'); old.write_bytes(b'old')
                 args = types.SimpleNamespace(label='test.bridge', plist_new=new, plist_snapshot=old,
                                              host='127.0.0.1', port=12345, self_check_url=None,
-                                             state_file=state, delay=0)
-                checks = [{'listener': not failure}, {'listener': True}]
-                with mock.patch.object(cutover, 'run') as run, mock.patch.object(cutover, 'check', side_effect=checks):
+                                             state_file=state, delay=0, expect_release='/private/release',
+                                             confirm_file=d / 'confirm', confirm_nonce='fake-nonce', confirm_timeout=0, post_confirm_watch=0)
+                (d / 'confirm').write_text('fake-nonce\n'); (d / 'confirm').chmod(0o600)
+                checks = [{'listener': not failure, 'pid': '123'}, {'listener': True}]
+                with mock.patch.object(cutover, 'run') as run, mock.patch.object(cutover, 'check', side_effect=checks), mock.patch.object(cutover, 'listener', return_value='123'):
                     result = cutover.execute(args, target)
                 self.assertEqual(target.read_bytes(), b'old' if failure else b'new')
                 self.assertEqual(result['rolled_back'], failure)
@@ -98,14 +103,18 @@ class Patch1(unittest.TestCase):
             d = Path(d); d.chmod(0o700)
             public = subprocess.check_output([str(scripts / 'gen_keypair.sh'), str(d)])
             (d / 'public.pem').write_bytes(public)
-            envelope = subprocess.check_output([str(scripts / 'make_token_and_encrypt.sh'), str(d / 'public.pem'), str(d / 'token')])
+            spec = importlib.util.spec_from_file_location('provision_fake', scripts / 'provision.py')
+            provision = importlib.util.module_from_spec(spec); spec.loader.exec_module(provision)
+            output = io.StringIO()
+            with mock.patch.object(sys, 'argv', ['provision', 'encrypt', str(d / 'public.pem'), str(d / 'token')]), mock.patch.object(provision.secrets, 'token_urlsafe', return_value='fake-test-token-only-000000000000'), contextlib.redirect_stdout(output):
+                provision.main()
+            envelope = output.getvalue().encode()
             subprocess.run([str(scripts / 'decrypt_store.sh'), str(d / 'private.pem'), str(d / 'stored'), '--wipe-key'], input=envelope, check=True, capture_output=True)
             self.assertEqual((d / 'token').read_bytes(), (d / 'stored').read_bytes())
             self.assertEqual((d / 'stored').stat().st_mode & 0o777, 0o600)
             self.assertFalse((d / 'private.pem').exists())
-            result = subprocess.run([str(scripts / 'make_token_and_encrypt.sh'), str(d / 'public.pem'), str(d / 'token')], capture_output=True)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertEqual(result.stdout, b'')
+            with mock.patch.object(sys, 'argv', ['provision', 'encrypt', str(d / 'public.pem'), str(d / 'token')]), mock.patch.object(provision.secrets, 'token_urlsafe', return_value='fake-test-token-only-000000000000'), self.assertRaises(FileExistsError):
+                provision.main()
 
     def test_cutover_bootstrap_failure_restores(self):
         with tempfile.TemporaryDirectory() as d:

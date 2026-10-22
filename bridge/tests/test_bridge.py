@@ -23,6 +23,9 @@ atexit.register(shutil.rmtree, TMP)
 (TMP / 'ws').mkdir()
 (TMP / 'bridge.token').write_text('test-key\n')
 (TMP / 'bridge.token').chmod(0o600)
+for name in ('box', 'peer'):
+    (TMP / (name + '.token')).write_text('fake-' + name + '-test-only')
+    (TMP / (name + '.token')).chmod(0o600)
 CONF = {
     'server': {'bind_host': '127.0.0.1', 'port': 0, 'allow_loopback_for_tests': True, 'host_label': 'mac-test',
                'journal': str(TMP / 'jobs.json'), 'webhook_conf': str(TMP / 'webhook.conf'),
@@ -31,9 +34,9 @@ CONF = {
     'codex': {'bin': '/opt/test/codex', 'home': str(TMP / 'codex-home')},
     'claude': {'bin': 'claude', 'path_prepend': ['/opt/test/bin']},
     'access': {'allowed_sources': [
-        {'ip': '192.0.2.10', 'tag': 'tag:dispatcher'},
-        {'ip': '192.0.2.20', 'node': 'peer-a.example.ts.net'},
-        {'ip': '127.0.0.1', 'tag': 'tag:dispatcher'},
+        {'ip': '192.0.2.10', 'tag': 'tag:dispatcher', 'token_files': [str(TMP / 'box.token')]},
+        {'ip': '192.0.2.20', 'node': 'peer-a.example.ts.net', 'token_files': [str(TMP / 'peer.token')]},
+        {'ip': '127.0.0.1', 'tag': 'tag:dispatcher', 'token_files': [str(TMP / 'bridge.token')]},
     ]},
 }
 (TMP / 'config.json').write_text(json.dumps(CONF))

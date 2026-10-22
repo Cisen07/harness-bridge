@@ -46,8 +46,7 @@ by the caller. Network ACLs must still restrict relay-to-bridge reachability.
 ## Forced-command proxy regression (local manual test)
 
 The Linux relay wrapper uses `/usr/bin/bash` (Bash >=5.1), unsets all eight proxy
-variables before curl, and defaults `CURL=/usr/bin/curl` (override with an absolute
-path only). `-q` is the first curl argument, disabling curlrc; `--noproxy '*'` and
+variables before curl, and pins `CURL=/usr/bin/curl`; environment overrides are ignored. `-q` is the first curl argument, disabling curlrc; `--noproxy '*'` and
 `--proto '=http'` prevent proxy forwarding and other protocols. The authorization
 shell variable is not exported; fd 3 is an anonymous process-substitution pipe.
 

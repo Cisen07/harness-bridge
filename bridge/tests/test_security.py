@@ -224,6 +224,8 @@ class HttpBoundary(unittest.TestCase):
                 self.assertEqual(self.call({'Authorization': auth}, method=method), 403)
             self.assertEqual(self.call(method=method), 200 if method == 'GET' else 202)
 
+    @mock.patch.dict(T.B._SERVER, require_per_source_tokens=False)
+    @mock.patch.object(T.B, 'ALLOWED_SOURCES', {'127.0.0.1': {}})
     def test_token_files_fail_closed_and_opt_out(self):
         with tempfile.TemporaryDirectory(dir=ROOT) as folder:
             path = pathlib.Path(folder) / 'credential'
@@ -240,10 +242,17 @@ class HttpBoundary(unittest.TestCase):
                     path.unlink()
                     self.assertEqual(self.call(omit=('Authorization',)), 202)
 
+    @mock.patch.dict(T.B._SERVER, require_per_source_tokens=False)
+    @mock.patch.object(T.B, 'ALLOWED_SOURCES', {'127.0.0.1': {}})
     def test_startup_requires_valid_token_before_listening(self):
         with tempfile.TemporaryDirectory(dir=ROOT) as folder:
             path = pathlib.Path(folder) / 'credential'
-            env = dict(os.environ, HARNESS_BRIDGE_TOKEN_FILE=str(path))
+            legacy_config = json.loads(json.dumps(T.CONF))
+            legacy_config['server']['require_per_source_tokens'] = False
+            legacy_config['access']['allowed_sources'] = [{'ip': '127.0.0.1', 'node': 'fake-test'}]
+            config_path = pathlib.Path(folder) / 'legacy.json'
+            config_path.write_text(json.dumps(legacy_config))
+            env = dict(os.environ, HARNESS_BRIDGE_TOKEN_FILE=str(path), HARNESS_BRIDGE_CONFIG=str(config_path))
             for mode in (None, 0o644):
                 if mode is not None:
                     path.write_text('test-key\n')
@@ -368,6 +377,8 @@ class AdditionalPolicies(unittest.TestCase):
             server.shutdown()
             server.server_close()
 
+    @mock.patch.dict(T.B._SERVER, require_per_source_tokens=False)
+    @mock.patch.object(T.B, 'ALLOWED_SOURCES', {'127.0.0.1': {}})
     def test_duplicate_auth_and_unsafe_file_rejected(self):
         from email.message import Message
         headers = Message()

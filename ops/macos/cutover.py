@@ -3,11 +3,14 @@
 import argparse
 import ipaddress
 import json
+import math
 import os
 from pathlib import Path
 import plistlib
 import re
-import shutil
+import shlex
+import stat
+import hmac
 import subprocess
 import tempfile
 import time
@@ -33,23 +36,56 @@ def install(source, target):
             os.unlink(name)
 
 
-def check(host, port, url=None, clock=time.monotonic, sleep=time.sleep):
+def owned_file(path, modes, limit):
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) not in modes:
+            raise ValueError('unsafe control file')
+        with os.fdopen(fd, 'rb', closefd=False) as stream:
+            data = stream.read(limit + 1)
+            if len(data) > limit:
+                raise ValueError('oversized control file')
+            return data
+    finally:
+        os.close(fd)
+
+
+def listener(host, port, label=None, release=None):
+    output = run(['/usr/sbin/lsof', '-nP', '-a', '-iTCP:' + str(port), '-sTCP:LISTEN', '-Fpn'])
+    pid, found = None, set()
+    for line in output.splitlines():
+        if line.startswith('p'):
+            pid = line[1:]
+        if line.startswith('n'):
+            if line != 'n%s:%s' % (host, port) or not pid or not pid.isdigit():
+                raise ValueError('unexpected listener')
+            found.add(pid)
+    if len(found) != 1:
+        raise ValueError('missing or ambiguous listener')
+    pid = found.pop()
+    if label:
+        output = run(['/bin/launchctl', 'print', 'gui/%d/%s' % (os.getuid(), label)])
+        match = re.search(r'^\s*pid = ([0-9]+)\s*$', output, re.M)
+        if not match or match.group(1) != pid:
+            raise ValueError('launchd listener mismatch')
+    if release:
+        command = run(['/bin/ps', '-o', 'command=', '-p', pid])
+        root = str(Path(release).resolve())
+        paths = [word.partition('=')[2] if '=' in word else word for word in shlex.split(command)]
+        if not any(os.path.isabs(word) and (os.path.normpath(word) == root or os.path.normpath(word).startswith(root + '/')) for word in paths):
+            raise ValueError('unexpected release')
+    return pid
+
+
+def check(host, port, url=None, clock=time.monotonic, sleep=time.sleep, label=None, release=None):
     start = clock()
     stable_since = None
     last = None
     result = {'listener': False, 'pid_stable': False, 'self_check': url is None}
     while clock() - start < 60:
         try:
-            output = run(['/usr/sbin/lsof', '-nP', '-a', '-iTCP:' + str(port), '-sTCP:LISTEN', '-Fpn'],
-                         timeout=min(8, max(0.01, 60 - (clock() - start))))
-            pid = None
-            found = set()
-            for line in output.splitlines():
-                if line.startswith('p'):
-                    pid = line[1:]
-                if line == 'n%s:%s' % (host, port) and pid:
-                    found.add(pid)
-            current = next(iter(found)) if len(found) == 1 else None
+            current = listener(host, port, label, release)
             result['listener'] = current is not None
             if current is None or current != last:
                 stable_since = clock() if current else None
@@ -66,7 +102,10 @@ def check(host, port, url=None, clock=time.monotonic, sleep=time.sleep):
                     except urllib.error.HTTPError as error:
                         result['self_check'] = error.code == 403
                 if result['self_check']:
+                    result['pid'] = current
                     return result
+        except ValueError:
+            return {'listener': False, 'pid_stable': False, 'self_check': False}
         except (OSError, subprocess.SubprocessError):
             result['listener'] = False
             stable_since = None
@@ -84,45 +123,90 @@ def success(checks):
     return all(checks.values())
 
 
-def execute(a, target):
-    state = {'phase': 'delay', 'rolled_back': False, 'checks': {}}
+def execute(a, target, clock=None, sleep=None):
+    clock = clock or time.monotonic
+    sleep = sleep or time.sleep
+    snapshot = owned_file(a.plist_snapshot, {0o600, 0o644}, 1024 * 1024)
+    state = {'phase': 'armed', 'rolled_back': False, 'checks': {}}
     domain = 'gui/%d' % os.getuid()
-    def save():
+    def save(phase):
+        state['phase'] = phase
         state['timestamp'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
         fd, temporary = tempfile.mkstemp(dir=Path(a.state_file).parent, prefix='.state-')
-        with os.fdopen(fd, 'w') as f:
-            os.fchmod(f.fileno(), 0o600)
-            json.dump(state, f)
-        os.replace(temporary, a.state_file)
-    def switch(source):
-        # bootout may report already absent; bootstrap remains checked.
+        try:
+            with os.fdopen(fd, 'w') as f:
+                os.fchmod(f.fileno(), 0o600)
+                json.dump(state, f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temporary, a.state_file)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+    def switch(source, restore=False):
         try:
             run(['/bin/launchctl', 'bootout', domain + '/' + a.label])
         except subprocess.CalledProcessError:
             pass
-        install(source, target)
+        if restore:
+            # Use the bytes validated before arming, even if the path changes later.
+            fd, name = tempfile.mkstemp(dir=target.parent, prefix='.snapshot-')
+            try:
+                with os.fdopen(fd, 'wb') as stream:
+                    stream.write(snapshot)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(name, target)
+            finally:
+                if os.path.exists(name):
+                    os.unlink(name)
+        else:
+            install(source, target)
         run(['/bin/launchctl', 'bootstrap', domain, str(target)])
-    save()
-    time.sleep(a.delay)
+    def unchanged(pid):
+        if listener(a.host, a.port, a.label, a.expect_release) != pid:
+            raise ValueError('listener changed')
+    save('armed')
+    sleep(a.delay)
     try:
-        state['phase'] = 'cutover'
-        save()
         switch(a.plist_new)
-        state['checks']['new'] = check(a.host, a.port, a.self_check_url)
+        save('switched')
+        save('self_check')
+        state['checks']['new'] = check(a.host, a.port, a.self_check_url, clock=clock, sleep=sleep,
+                                     label=a.label, release=a.expect_release)
         if not success(state['checks']['new']):
             raise RuntimeError('health check failed')
-        state['phase'] = 'complete'
+        pid = state['checks']['new']['pid']
+        save('awaiting_confirm')
+        deadline = clock() + a.confirm_timeout
+        while True:
+            unchanged(pid)
+            try:
+                data = owned_file(a.confirm_file, {0o600}, 4096)
+            except FileNotFoundError:
+                data = None
+            if data is not None:
+                if not hmac.compare_digest(data, (a.confirm_nonce + '\n').encode('ascii')):
+                    raise ValueError('confirmation mismatch')
+                break
+            if clock() >= deadline:
+                raise TimeoutError('confirmation timeout')
+            sleep(min(2, deadline - clock()))
+        save('confirmed')
+        save('watching')
+        deadline = clock() + a.post_confirm_watch
+        while clock() < deadline:
+            sleep(min(30, deadline - clock()))
+            unchanged(pid)
+        save('complete')
     except Exception:
         state['rolled_back'] = True
-        state['phase'] = 'rollback'
-        save()
         try:
-            switch(a.plist_snapshot)
-            state['checks']['rollback'] = check(a.host, a.port, a.self_check_url)
-            state['phase'] = 'rolled_back' if success(state['checks']['rollback']) else 'rollback_failed'
+            switch(a.plist_snapshot, restore=True)
+            state['checks']['rollback'] = check(a.host, a.port, a.self_check_url, clock=clock, sleep=sleep, label=a.label)
+            save('rolled_back' if success(state['checks']['rollback']) else 'rollback_failed')
         except Exception:
-            state['phase'] = 'rollback_failed'
-    save()
+            save('rollback_failed')
     return state
 
 
@@ -131,11 +215,25 @@ def main():
     for name in ('label', 'plist-new', 'plist-snapshot', 'bind', 'state-file'):
         p.add_argument('--' + name, required=True)
     p.add_argument('--self-check-url')
+    p.add_argument('--expect-release')
+    p.add_argument('--confirm-file')
+    p.add_argument('--confirm-nonce')
+    p.add_argument('--confirm-timeout', type=float, default=600)
+    p.add_argument('--post-confirm-watch', type=float, default=300)
     p.add_argument('--delay', type=float, default=5)
     group = p.add_mutually_exclusive_group()
     group.add_argument('--dry-run', action='store_true')
     group.add_argument('--execute', action='store_true')
     a = p.parse_args()
+    if a.execute and not all((a.self_check_url, a.expect_release, a.confirm_file, a.confirm_nonce)):
+        p.error('execute requires self-check-url, expect-release, confirm-file and confirm-nonce')
+    if not all(math.isfinite(n) and n >= 0 for n in (a.delay, a.confirm_timeout, a.post_confirm_watch)):
+        p.error('invalid timing')
+    if a.confirm_nonce and (not a.confirm_nonce.isascii() or not 1 <= len(a.confirm_nonce) <= 4095 or any(c.isspace() for c in a.confirm_nonce)):
+        p.error('invalid confirmation nonce')
+    if a.expect_release and (not Path(a.expect_release).is_absolute() or str(Path(a.expect_release).resolve()) == '/'):
+        p.error('expect-release must be an absolute release directory')
+    owned_file(a.plist_snapshot, {0o600, 0o644}, 1024 * 1024)
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{2,120}', a.label) or a.delay < 0:
         p.error('invalid label/delay')
     a.host, raw_port = a.bind.rsplit(':', 1)
@@ -153,7 +251,7 @@ def main():
                 p.error('plist label mismatch')
     target = Path.home() / 'Library/LaunchAgents' / (a.label + '.plist')
     if not a.execute:
-        print('Dry run: detach; delay %.1fs; launchctl bootout gui/%d/%s; atomic copy %s -> %s; launchctl bootstrap; lsof exact listener + stable PID >=30s; optional HTTP 403; on failure restore %s and recheck; state %s' %
+        print('Dry run: detach; delay %.1fs; launchctl bootout gui/%d/%s; atomic copy %s -> %s; launchctl bootstrap; lsof exact listener + stable PID >=30s; HTTP 403; launchd PID + release argv; external nonce confirmation; post-confirm watch; on failure restore %s and recheck; state %s' %
               (a.delay, os.getuid(), a.label, a.plist_new, target, a.plist_snapshot, a.state_file))
         return
     if os.fork():

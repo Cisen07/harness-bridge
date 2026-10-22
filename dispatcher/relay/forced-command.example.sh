@@ -3,8 +3,7 @@
 # Protocol: SSH command = "GET /health" (etc.); stdin = auth header + newline + body.
 # This is an alternative to relay_via_host.sh's inline remote-command protocol.
 unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY no_proxy NO_PROXY
-CURL=${CURL:-/usr/bin/curl}
-[[ $CURL = /* ]] || exit 2
+CURL=/usr/bin/curl
 set -euo pipefail
 if (( BASH_VERSINFO[0] < 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] < 1) )); then
   echo 'relay requires Bash 5.1 or newer' >&2

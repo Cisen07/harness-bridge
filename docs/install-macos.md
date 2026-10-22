@@ -41,8 +41,8 @@ routine URL and `Bearer <key>` (see webhook-wake.md).
 
 ## 5. Verify from the dispatcher
 ```sh
-curl -H @/dev/fd/3 3< <(printf '%s\n' "$AUTH_HEADER") --proxy socks5h://127.0.0.1:10555 --noproxy '' http://<mac-ip>:18542/health
-curl -H @/dev/fd/3 3< <(printf '%s\n' "$AUTH_HEADER") ... -X POST -H 'Content-Type: application/json' -d '{"backend":"mac-codex","prompt":"reply OK"}' http://<mac-ip>:18542/jobs
+curl -q --noproxy '*' -H @/dev/fd/3 3< <(printf '%s\n' "$AUTH_HEADER") http://<mac-ip>:18542/health
+curl -q --noproxy '*' -H @/dev/fd/3 3< <(printf '%s\n' "$AUTH_HEADER") ... -X POST -H 'Content-Type: application/json' -d '{"backend":"mac-codex","prompt":"reply OK"}' http://<mac-ip>:18542/jobs
 ```
 Then wait for the push and `GET /jobs/<id>`.
 
@@ -51,17 +51,18 @@ Follow deploy-and-rollback.md (sha check, `cp -p` backup, py_compile, detached r
 
 ## Required API token
 
-Before starting, generate one random shared token (see SECURITY.md), provision it separately on the Mac
+Before starting, provision a distinct random token for every allowed source (see SECURITY.md), provision it separately on the Mac
 and dispatcher using `bridge/bridge.token.example` and `dispatcher/bridge.token.example` as format examples,
-and chmod both files 600. Set `[server] token_file` or `HARNESS_BRIDGE_TOKEN_FILE` on the bridge;
-export `HARNESS_BRIDGE_TOKEN_FILE` on the dispatcher. Defaults are `<bridge dir>/bridge.token` and
-`$HARNESS_HOME/bridge.token`. Missing or invalid credentials refuse startup (including non-0600 permissions); provision them before upgrading.
+and chmod both files 600. Set each source's absolute `token_files` paths on the bridge (default
+`server.require_per_source_tokens = true`, required in production);
+export `HARNESS_BRIDGE_TOKEN_FILE` on the dispatcher. The dispatcher defaults to `$HARNESS_HOME/bridge.token`.
+The global bridge token is only a fallback when `require_per_source_tokens = false`. Missing or invalid credentials refuse startup (including non-0600 permissions); provision them before upgrading.
 The file is also checked on every request so unsafe rotation fails closed.
 For manual curl, use the repository's header helper without exposing the token in argv:
 
 ```bash
 AUTH_HEADER=$(python3 dispatcher/bin/_bridge_auth.py) || exit 1
-curl -H @/dev/fd/3 3<<<"$AUTH_HEADER" --proxy socks5h://127.0.0.1:10555 --noproxy '' http://<mac-ip>:18542/health
+curl -q --noproxy '*' -H @/dev/fd/3 3< <(printf '%s\n' "$AUTH_HEADER") http://<mac-ip>:18542/health
 # Add -H 'Content-Type: application/json' and --data-binary @request.json for POST /jobs.
 unset AUTH_HEADER
 ```
@@ -87,7 +88,7 @@ token_file = "/private/stage/bridge.token"
 
 [access]
 allowed_sources = [
-  { ip = "<本机tailnet IP>", node = "<本机node名>" },
+  { ip = "<本机tailnet IP>", node = "<本机node名>", token_files = ["/private/stage/bridge.token"] },
 ]
 ```
 

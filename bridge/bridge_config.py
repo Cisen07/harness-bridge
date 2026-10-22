@@ -31,6 +31,7 @@ DEFAULTS = {
         'host_label': 'mac',           # sent as "host" in the terminal webhook payload
         'max_workers': 4,
         'require_token': True,
+        'require_per_source_tokens': True,
         'token_file': '',
         'webhook_url_prefix': '',
         'job_timeout_seconds': 3600,
@@ -103,6 +104,8 @@ def load():
     server['journal'] = server['journal'] or str(BRIDGE_DIR / 'jobs.json')
     server['webhook_conf'] = server['webhook_conf'] or str(BRIDGE_DIR / 'webhook.conf')
     server['token_file'] = server['token_file'] or str(BRIDGE_DIR / 'bridge.token')
+    if not isinstance(server['require_per_source_tokens'], bool):
+        raise ValueError('server.require_per_source_tokens must be boolean')
     if not isinstance(server['require_token'], bool):
         raise ValueError('server.require_token must be boolean')
     host = ipaddress.ip_address(server['bind_host'])
@@ -115,6 +118,7 @@ def load():
     codex = cfg['codex']
     codex['home'] = codex['home'] or os.environ.get('CODEX_HOME', str(HOME / '.codex'))
     rules = {}
+    used_token_paths = set()
     for entry in cfg['access']['allowed_sources']:
         if not isinstance(entry, dict) or 'ip' not in entry:
             raise ValueError('access.allowed_sources entries need an "ip"')
@@ -124,9 +128,15 @@ def load():
         if 'token_files' in entry:
             slots = entry['token_files']
             if (not isinstance(slots, list) or not 1 <= len(slots) <= 2
-                    or any(not isinstance(p, str) or not p for p in slots)):
-                raise ValueError('token_files needs one or two nonempty paths')
+                    or any(not isinstance(p, str) or not pathlib.Path(p).is_absolute() for p in slots)):
+                raise ValueError('token_files needs one or two absolute paths')
+            normalized = [os.path.normpath(p) for p in slots]
+            if len(set(normalized)) != len(normalized) or any(p in used_token_paths for p in normalized):
+                raise ValueError('token_files paths must be distinct across sources and slots')
+            used_token_paths.update(normalized)
             rule['token_files'] = slots
+        elif server['require_per_source_tokens']:
+            raise ValueError('each allowed source requires token_files')
         if str(entry['ip']) in rules:
             raise ValueError('duplicate source IP')
         rules[str(entry['ip'])] = rule

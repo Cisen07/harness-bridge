@@ -36,8 +36,9 @@ Provision the same random value in separate owned regular files on the bridge an
 see `bridge/bridge.token.example` and `dispatcher/bridge.token.example`. Generate a fresh value with
 `python3 -c 'import secrets; print(secrets.token_urlsafe(32))'` into a private file (`umask 077`).
 Placeholders must be replaced. Credentials never belong in logs, command arguments, job records or git.
-Bridge: `[server] token_file` (default `bridge.token` beside the bridge), overridden by
-`HARNESS_BRIDGE_TOKEN_FILE`. Dispatcher: exported `HARNESS_BRIDGE_TOKEN_FILE`, default
+Bridge: each allowed source needs absolute `token_files` paths by default. Only
+`require_per_source_tokens = false` permits global `[server] token_file` (default
+`bridge.token` beside the bridge), overridden by `HARNESS_BRIDGE_TOKEN_FILE`. Dispatcher: exported `HARNESS_BRIDGE_TOKEN_FILE`, default
 `$HARNESS_HOME/bridge.token`. Missing, empty, oversized, symlinked, incorrectly owned or non-0600 files
 fail closed. Startup validates the token before listening and refuses invalid credentials. The bridge rereads on each request to permit rotation and uses `hmac.compare_digest`.
 Explicit legacy opt-out: bridge `[server] require_token = false`, dispatcher
@@ -71,3 +72,8 @@ not defend against code running as the same local user: it can read credential
 files. Tokens do not isolate jobs. Use separate OS identities and sandboxing for
 local isolation. Per-source current/next slots and global-file fallback are
 documented in [deploy-and-rollback](docs/deploy-and-rollback.md#source-bound-tokens-and-rotation).
+
+Production requires `server.require_per_source_tokens = true` (default) and distinct
+absolute `token_files` per allowed source. Global token fallback is available only
+with explicit `false`. See [deployment](docs/deploy-and-rollback.md) for TW relay
+identity risk, 24-hour no-token rollback limits, and client argv/environ self-checks.

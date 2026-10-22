@@ -22,7 +22,7 @@ running that CLI on the Mac directly. Report only what the API shows.
 
 ## Connectivity
 - All requests leave the box via the userspace tailscaled SOCKS proxy:
-  `curl --proxy socks5h://$HARNESS_SOCKS_ADDR --noproxy '' http://<mac-ip>:<port>/...`
+  `curl -q -H @/dev/fd/3 --proxy socks5h://$HARNESS_SOCKS_ADDR --noproxy '' http://<mac-ip>:<port>/... 3< <(printf '%s\n' "$AUTH_HEADER")` (keep AUTH_HEADER non-exported)
 - If it fails: run `dispatcher/tailscale/start-tailscaled.sh`, then `tailscale --socket=$HARNESS_HOME/run/tailscaled.sock status`.
   A Mac that shows online but times out usually means the bridge service is down: report and wait.
 - Optional fallback when the bridge is up but the box cannot reach it: `dispatcher/relay/relay_via_host.sh GET|POST <path>`

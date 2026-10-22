@@ -95,27 +95,49 @@ def read_bearer_token(path=None):
     """Read the owned 0600 credential without following symlinks or a stat/read race."""
     path = path or os.environ.get('HARNESS_BRIDGE_TOKEN_FILE') or _SERVER['token_file']
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    with os.fdopen(fd, 'rb') as stream:
-        info = os.fstat(stream.fileno())
+    try:
+        info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600 or info.st_uid != os.geteuid():
             raise ValueError('Token file must be an owned regular file with mode 0600')
-        raw = stream.read(4097)
-        if len(raw) > 4096:
-            raise ValueError('Token file too large')
-        token = raw.strip()
+        with os.fdopen(fd, 'rb', closefd=False) as stream:
+            raw = stream.read(4097)
+            if len(raw) > 4096:
+                raise ValueError('Token file too large')
+            token = raw.strip()
+    finally:
+        os.close(fd)
     if not token or len(token) > 4096 or any(c < 33 or c > 126 for c in token):
         raise ValueError('Invalid token file content')
     return token
 
 
+INVALID_NEXT_SLOTS = 0
+
+
+def token_slots(rule):
+    if 'token_files' in rule:
+        return rule['token_files']
+    if _SERVER.get('require_per_source_tokens', True):
+        raise ValueError('per-source token_files required')
+    return [None]
+
+
 def validate_startup_token():
     if _SERVER.get('require_token', True):
         try:
-            rules = list(ALLOWED_SOURCES.values()) or [{}]
+            seen_paths, seen_tokens = set(), []
+            rules = list(ALLOWED_SOURCES.values())
             for rule in rules:
-                for index, path in enumerate(rule.get('token_files', [None])):
+                for index, path in enumerate(token_slots(rule)):
                     try:
-                        read_bearer_token(path)
+                        resolved = os.path.abspath(path or os.environ.get('HARNESS_BRIDGE_TOKEN_FILE') or _SERVER['token_file'])
+                        if resolved in seen_paths:
+                            raise ValueError('reused token path')
+                        token = read_bearer_token(path)
+                        if any(hmac.compare_digest(token, previous) for previous in seen_tokens):
+                            raise ValueError('duplicate token content')
+                        seen_paths.add(resolved)
+                        seen_tokens.append(token)
                     except FileNotFoundError:
                         if index == 0:
                             raise
@@ -130,7 +152,12 @@ def validate_startup_token():
 def bearer_authorized(headers, address=None):
     if not _SERVER.get('require_token', True):
         return True
+    global INVALID_NEXT_SLOTS
     rule = ALLOWED_SOURCES.get(address, {})
+    try:
+        slots = token_slots(rule)
+    except ValueError:
+        return False
     supplied = headers.get_all('Authorization', [])
     try:
         candidate = supplied[0].encode('utf-8') if len(supplied) == 1 else b''
@@ -138,14 +165,16 @@ def bearer_authorized(headers, address=None):
         candidate = b''
     matched = False
     invalid = False
-    for index, path in enumerate(rule.get('token_files', [None])):
+    for index, path in enumerate(slots):
         token = b''
         try:
             token = read_bearer_token(path)
         except FileNotFoundError:
             invalid |= index == 0
         except (OSError, ValueError, KeyError):
-            invalid = True
+            invalid |= index == 0
+            if index != 0:
+                INVALID_NEXT_SLOTS += 1
         # Always compare every slot, including absent/invalid slots.
         equal = hmac.compare_digest(candidate, b'Bearer ' + token)
         matched |= equal and bool(token)

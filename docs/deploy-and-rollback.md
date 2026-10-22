@@ -63,16 +63,20 @@ option fall back to `OAEP-SHA1` (OAEP default compatibility). The second line is
 base64 ciphertext. Transfer this envelope back to the box; there run:
 
 ```bash
-ops/token-provision/decrypt_store.sh /private/key-dir/private.pem /private/bridge.token --wipe-key < envelope.txt
+ops/token-provision/decrypt_store.sh /private/key-dir/private.pem /private/bridge.token --require-mode sha256 --wipe-key < envelope.txt
 ```
 
 Decryption honors the envelope's explicit OAEP digest and creates the destination
 exclusively with 0600 permissions. Existing files are never overwritten. Errors
 are generic; if encryption fails after creation, the Mac token file remains for
 operator inspection/removal before retry. Keep all paths in private directories.
-`--wipe-key` overwrites, fsyncs, then deletes the one-shot private key only after
-successful storage; alternatively use `shred -u` where available, or overwrite and
-unlink. APFS/SSD snapshots and copy-on-write prevent guaranteed physical erasure;
+`--wipe-key` overwrites with zeroes, fsyncs, truncates to zero, fsyncs again, then deletes the one-shot private key only after
+successful storage. Box policy may require retaining the empty inode: use
+`--wipe-key=truncate-only` to overwrite, fsync and truncate without unlinking.
+Encryption requires an owned 0700 target parent directory. Decryption validates
+visible ASCII without whitespace (16..4096 bytes, allowing one final newline as
+file framing) before writing. Recommend `--require-mode sha256` on the box to
+reject SHA-1 envelopes; on encrypt it disables the compatibility fallback. APFS/SSD snapshots and copy-on-write prevent guaranteed physical erasure;
 exclude the one-shot directory from backups and use encrypted storage. Never send
 the private key or plaintext token back through the conversation/job output.
 
@@ -88,7 +92,10 @@ Ensure no other work is running and the snapshot is known good. Example:
 python3 -B ops/macos/cutover.py --label com.example.bridge \
   --plist-new /private/release/new.plist --plist-snapshot /private/release/old.plist \
   --bind <mac-tailnet-ip>:18542 --state-file /private/release/cutover.json \
-  --self-check-url http://<mac-tailnet-ip>:18542/health --delay 5 --dry-run
+  --self-check-url http://<mac-tailnet-ip>:18542/health --delay 5 \
+  --expect-release /private/release/new \
+  --confirm-file /private/release/confirmation --confirm-nonce <fresh-nonce> \
+  --confirm-timeout 600 --post-confirm-watch 300 --dry-run
 ```
 
 No execution occurs by default. Replace `--dry-run` with `--execute` for the actual
@@ -96,14 +103,43 @@ cutover. It double-forks and calls setsid before sleeping, so a job can restart 
 own bridge. It uses `launchctl bootout`, atomic copy/rename into
 `~/Library/LaunchAgents/<label>.plist`, then `launchctl bootstrap`. In the health
 window (60 seconds), lsof must show exactly the expected address/port and one PID,
-with two observations at least 30 seconds apart. Optional self-check uses no token,
-no proxy, no redirects, and expects 403 (proves the authenticated listener answers).
-Any switch/check failure triggers snapshot restore/bootstrap and one further health
-window. Poll the JSON state file (0600, atomic writes): `complete`, `rolled_back`,
-or `rollback_failed` is terminal; intermediate stages are `delay`, `cutover`, `rollback`.
-Only check booleans, phases and timestamps are written; subprocess output is suppressed.
+stable for at least 30 seconds. That PID must equal `launchctl print gui/<uid>/<label>`'s
+pid and `ps -o command= -p PID` must include an absolute program/script path inside
+`--expect-release` (a distinct, immutable release directory). A foreign/old listener
+or old release argv fails and triggers rollback. Execute requires `--self-check-url`,
+`--expect-release`, `--confirm-file`, and `--confirm-nonce`; dry-run does not.
+The self-check uses no token, proxy or redirects and expects HTTP 403.
+
+After self-check, the external box must use its **box source token** to submit a
+small job that exclusively creates the confirmation file, owned by the bridge user,
+regular, non-symlink, mode 0600, containing exactly the nonce and one newline.
+Use a fresh nonce and a previously absent private file path for every attempt.
+Do not prepare the confirmation file locally: this step proves the external job
+path. The default confirmation deadline is 600 seconds; timeout, unsafe file or
+wrong content restores the snapshot. While waiting, the listener identity is
+checked every two seconds. After confirmation, watch for 300 seconds, checking
+every 30 seconds and at the end: changed PID, lost listener or release argv mismatch
+restores the snapshot. Both durations are configurable; use production defaults.
+
+Snapshot plists are checked before arming: owned regular non-symlink files, mode
+0600 or 0644. Validated snapshot bytes are retained for rollback. Poll the JSON
+state file (0600, atomic and fsynced): `armed`, `switched`, `self_check`,
+`awaiting_confirm`, `confirmed`, `watching`, `complete`, `rolled_back`,
+`rollback_failed`. Only phases, check results, PID and timestamps are stored; no
+nonce, token, hashes or command output. Rollback checks launchd/listener identity
+and HTTP 403 without requiring the new release path. A no-token old version may
+therefore restore successfully but fail that HTTP check: investigate `rollback_failed`.
 Do not race multiple cutovers, change snapshots during execution, or put secrets in
 URL/path/label arguments. This tool is not run automatically during installation.
+
+Cutover has an approximately **5–70 second service gap**. Choose a window with no
+queued/running jobs and notify users beforehand. If a client's POST has a connection
+error and it is certain no `job_id` was received, wait 30 seconds and retry once.
+If acceptance is uncertain, reconcile the request before resubmission to avoid duplicates.
+
+Rolling back to a version without token authentication is temporary security debt,
+limited to **24 hours per rollback**. Never roll back to a no-token version during a
+security incident. Record the deadline and owner, and restore authentication before it expires.
 
 ## Source-bound tokens and rotation
 
@@ -117,8 +153,12 @@ allowed_sources = [
 
 Each source must pass IP + whois identity + its own Bearer slots. One or two paths
 are accepted, each re-read with the same owned-regular-file/no-symlink/0600/content
-rules; all slots are compared without stopping on a match. Omitted `token_files`
-uses the global `server.token_file` (including its legacy environment override).
+rules; all slots are compared without stopping on a match.
+`server.require_per_source_tokens = true` is the default: every allowed source must
+have `token_files`, each an absolute path. Only an explicit `false` enables global
+`server.token_file` fallback (including its legacy environment override). Production
+must keep the default. Startup rejects shared paths across sources (including legacy fallback) and equal token
+contents across sources or slots, comparing with `compare_digest` without logging values.
 Startup requires current; a missing next is normal, but an existing invalid next
 is a configuration error. Request failures always return the same 403. Publish a
 new next atomically, provision it on the caller using channel B, switch the caller,
@@ -127,3 +167,38 @@ current file (requests fail closed even if next exists); other source tokens wor
 Before the next restart remove/reconfigure that revoked rule, since a missing
 current deliberately refuses startup. No production self-source or ACL changes
 are required for rotation.
+
+At runtime, an invalid existing next slot is ignored and increments the in-memory
+`INVALID_NEXT_SLOTS` counter once for that request; current remains usable. No slot
+content, command output or exception text is logged. A missing next is normal and
+is not counted. Current remains mandatory even when next is valid.
+
+## HMAC challenge (box identity proof)
+
+Use `ops/token-provision/hmac_challenge.py make --token-file /private/box-current`
+on one endpoint. Transfer only its JSON `nonce` and `mac` to the other, then run
+`hmac_challenge.py verify --token-file /private/box-current --nonce <nonce> --mac <mac>`.
+The nonce is 32 random bytes; the proof is HMAC-SHA256(token, nonce). Verification
+prints only `match` (exit 0) or `mismatch` (exit 1); no token or token hash is exposed.
+Use fresh challenges over an authenticated channel; this proves possession, not
+network origin or replay resistance by itself. File checks match the bridge's.
+
+## Relay identity risk
+
+Requests relayed through TW appear to the MBP as TW source traffic and use the
+TW source token. TW and box each hold a copy. The credential's impact is limited
+to the TW identity; it does not authorize the independent box source identity.
+Record this accepted risk and the source rules in the release manifest.
+
+## Client argv/environ token self-check
+
+Use only `-H @/dev/fd/3` with an anonymous pipe for manual curl headers. Keep
+`AUTH_HEADER` a non-exported shell variable, disable shell tracing, and unset it
+after use. Never interpolate token file contents into a command argument.
+For rehearsal, use a unique **fake** marker and a slow loopback HTTP server so curl
+remains alive. Inspect `ps -o command= -p <curl-pid>` (and the parent shell) for
+absence of the marker; inspect `/proc/<pid>/environ` on Linux, or `ps eww -p <pid>`
+on macOS, for the same absence. Automate the comparison in memory and emit only
+pass/fail; never dump a real process environment or use a real token for this check.
+Also check the dispatcher and relay process chain. Header bytes should exist only
+in private token files, process memory and fd 3, never argv, exported variables or logs.
