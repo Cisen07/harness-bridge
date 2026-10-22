@@ -47,11 +47,6 @@ class Cutover(unittest.TestCase):
             now, phases = [0], []
             def confirm(value='fake-nonce\n'):
                 a.confirm_file.write_text(value); a.confirm_file.chmod(0o600)
-            if scenario not in ('timeout', 'crash35'):
-                confirm('wrong\n' if scenario == 'wrong' else 'fake-nonce\n')
-                if scenario == 'confirm_mode': a.confirm_file.chmod(0o644)
-                if scenario == 'confirm_symlink':
-                    safe = d / 'safe-confirm'; a.confirm_file.rename(safe); a.confirm_file.symlink_to(safe)
             def sleep(seconds):
                 now[0] += seconds
                 if scenario == 'crash35' and now[0] >= 40:
@@ -77,6 +72,13 @@ class Cutover(unittest.TestCase):
             original_dump = json.dump
             def dump(state, stream):
                 phases.append(state['phase']); original_dump(state, stream)
+                if state['phase'] == 'awaiting_confirm':
+                    if scenario not in ('timeout', 'crash35'):
+                        confirm('wrong\n' if scenario == 'wrong' else 'fake-nonce\n')
+                        if scenario == 'confirm_mode': a.confirm_file.chmod(0o644)
+                        if scenario == 'confirm_symlink':
+                            safe = d / 'safe-confirm'; a.confirm_file.rename(safe); a.confirm_file.symlink_to(safe)
+
             opener = mock.Mock()
             opener.open.side_effect = urllib.error.HTTPError(a.self_check_url, 403, 'Forbidden', {}, None)
             with mock.patch.object(cutover, 'run', side_effect=run), mock.patch.object(cutover.urllib.request, 'build_opener', return_value=opener), mock.patch.object(cutover.json, 'dump', side_effect=dump):
@@ -300,19 +302,32 @@ class Challenge(unittest.TestCase):
     def test_make_verify_and_mismatch(self):
         with tempfile.TemporaryDirectory() as folder:
             p = Path(folder) / 'token'; p.write_text('fake-test-token-only'); p.chmod(0o600)
-            code, output = self.invoke(['make', '--token-file', str(p)])
-            self.assertEqual(code, 0); data = json.loads(output)
-            self.assertEqual(set(data), {'nonce', 'mac'}); self.assertEqual(len(bytes.fromhex(data['nonce'])), 32)
-            args = ['verify', '--token-file', str(p), '--nonce', data['nonce'], '--mac', data['mac']]
+            challenge = Path(folder) / 'challenge'
+            base = ['verify', '--token-file', str(p), '--challenge-file', str(challenge)]
+            def new():
+                self.assertEqual(self.invoke(base + ['--new-challenge']), (0, ''))
+                self.assertEqual(challenge.stat().st_mode & 0o777, 0o600)
+                nonce = challenge.read_text().strip()
+                self.assertEqual(len(bytes.fromhex(nonce)), 32)
+                code, output = self.invoke(['make', '--token-file', str(p), '--nonce', nonce])
+                self.assertEqual(code, 0)
+                data = json.loads(output)
+                self.assertEqual(data['nonce'], nonce)
+                return data['mac']
+            mac = new()
+            self.assertEqual(self.invoke(base + ['--new-challenge']), (1, ''))
             with mock.patch.object(H.hmac, 'compare_digest', wraps=H.hmac.compare_digest) as compare:
-                self.assertEqual(self.invoke(args), (0, 'match\n')); compare.assert_called_once()
-            p.write_text('fake-other-token-only')
-            self.assertEqual(self.invoke(args), (1, 'mismatch\n'))
+                self.assertEqual(self.invoke(base + ['--mac', mac]), (0, '一致\n'))
+                compare.assert_called_once()
+            self.assertEqual(self.invoke(base + ['--mac', mac]), (1, '不一致\n'))
+            mac = new(); p.write_text('fake-other-token-only')
+            self.assertEqual(self.invoke(base + ['--mac', mac]), (1, '不一致\n'))
             for bad in ('not-hex', '00'):
-                self.assertEqual(self.invoke(args[:-1] + [bad]), (1, 'mismatch\n'))
-            p.chmod(0o644)
-            self.assertEqual(self.invoke(args), (1, 'mismatch\n'))
-            self.assertEqual(self.invoke(['make', '--token-file', str(p)]), (1, ''))
+                new()
+                self.assertEqual(self.invoke(base + ['--mac', bad]), (1, '不一致\n'))
+            new(); p.chmod(0o644)
+            self.assertEqual(self.invoke(base + ['--mac', mac]), (1, '不一致\n'))
+            self.assertEqual(self.invoke(['make', '--token-file', str(p), '--nonce', '00' * 32]), (1, ''))
 
     def test_same_file_rules_as_bridge(self):
         with tempfile.TemporaryDirectory() as folder:

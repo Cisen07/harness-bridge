@@ -112,6 +112,7 @@ def read_bearer_token(path=None):
 
 
 INVALID_NEXT_SLOTS = 0
+COUNTER_LOCK = threading.Lock()
 
 
 def token_slots(rule):
@@ -174,7 +175,8 @@ def bearer_authorized(headers, address=None):
         except (OSError, ValueError, KeyError):
             invalid |= index == 0
             if index != 0:
-                INVALID_NEXT_SLOTS += 1
+                with COUNTER_LOCK:
+                    INVALID_NEXT_SLOTS += 1
         # Always compare every slot, including absent/invalid slots.
         equal = hmac.compare_digest(candidate, b'Bearer ' + token)
         matched |= equal and bool(token)
@@ -450,6 +452,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.reply(400, {'error': 'Invalid JSON request, prompt, or session_id'})
 
 
+def codex_mode_summary():
+    return 'codex sandbox={}; approval_policy={}'.format(
+        CONFIG['codex']['sandbox'], CONFIG['codex']['approval_policy'])
+
+
 if __name__ == '__main__':
     os.umask(0o077)
     validate_startup_token()
@@ -459,5 +466,5 @@ if __name__ == '__main__':
         save()
         for job in INTERRUPTED_JOBS:
             notify_terminal(job)
-    print(f'harness-bridge listening on {HOST}:{PORT} ({len(ALLOWED_SOURCES)} allowed sources); workspace={WORKSPACE}', flush=True)
+    print(f'harness-bridge listening on {HOST}:{PORT} ({len(ALLOWED_SOURCES)} allowed sources); workspace={WORKSPACE}; {codex_mode_summary()}', flush=True)
     http.server.ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()

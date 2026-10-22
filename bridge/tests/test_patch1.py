@@ -88,9 +88,11 @@ class Patch1(unittest.TestCase):
                                              host='127.0.0.1', port=12345, self_check_url=None,
                                              state_file=state, delay=0, expect_release='/private/release',
                                              confirm_file=d / 'confirm', confirm_nonce='fake-nonce', confirm_timeout=0, post_confirm_watch=0)
-                (d / 'confirm').write_text('fake-nonce\n'); (d / 'confirm').chmod(0o600)
+                def publish(*args, **kwargs):
+                    (d / 'confirm').write_text('fake-nonce\n'); (d / 'confirm').chmod(0o600)
+                    return checks.pop(0)
                 checks = [{'listener': not failure, 'pid': '123'}, {'listener': True}]
-                with mock.patch.object(cutover, 'run') as run, mock.patch.object(cutover, 'check', side_effect=checks), mock.patch.object(cutover, 'listener', return_value='123'):
+                with mock.patch.object(cutover, 'run') as run, mock.patch.object(cutover, 'check', side_effect=publish), mock.patch.object(cutover, 'listener', return_value='123'):
                     result = cutover.execute(args, target)
                 self.assertEqual(target.read_bytes(), b'old' if failure else b'new')
                 self.assertEqual(result['rolled_back'], failure)

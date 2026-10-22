@@ -46,7 +46,7 @@ DEFAULTS = {
     'codex': {
         'bin': str(HOME / '.local/bin/codex'),
         'home': '',                    # default: $CODEX_HOME or ~/.codex
-        'sandbox': 'danger-full-access',
+        'sandbox': 'workspace-write',
         'approval_policy': 'never',
     },
     'claude': {

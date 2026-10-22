@@ -8,6 +8,9 @@ Store the completed topology-sensitive manifest privately, outside the public re
 - Release directory: `<absolute path>`
 - Source rules: `<source IP placeholder, whois tag/node, allowed identity>`
 - Token paths (no values): `<source: current absolute path, optional next absolute path>`
+- Token validation (HMAC challenge; only 一致 or 不一致): `<一致 / 不一致>`
+- Token rotation date: `<YYYY-MM-DD>`
+- Actual Codex sandbox: `<workspace-write / danger-full-access / other actual value>`
 - Relay key public fingerprint: `<SHA256 public-key fingerprint>`
 - Rollback snapshot location: `<absolute path>`
 - Rollback target commit / authentication enabled: `<commit / yes or no>`

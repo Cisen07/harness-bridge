@@ -97,3 +97,6 @@ keep staging files separate from production. Do not add this self-source to
 production. Do not modify ACLs for the rehearsal. Code rejects wildcard and
 non-tailnet bind addresses. `server.allow_loopback_for_tests = true` permits only
 127.0.0.1 for isolated tests; it is a test-only option, not a deployment setting.
+
+Every curl example uses `--noproxy '*'` to keep bridge traffic off proxies.
+Token paths must be owned regular files, mode 0600, and must not be symlinks.

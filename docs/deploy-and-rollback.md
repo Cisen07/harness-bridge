@@ -110,12 +110,21 @@ or old release argv fails and triggers rollback. Execute requires `--self-check-
 `--expect-release`, `--confirm-file`, and `--confirm-nonce`; dry-run does not.
 The self-check uses no token, proxy or redirects and expects HTTP 403.
 
-After self-check, the external box must use its **box source token** to submit a
-small job that exclusively creates the confirmation file, owned by the bridge user,
-regular, non-symlink, mode 0600, containing exactly the nonce and one newline.
-Use a fresh nonce and a previously absent private file path for every attempt.
-Do not prepare the confirmation file locally: this step proves the external job
-path. The default confirmation deadline is 600 seconds; timeout, unsafe file or
+After switching, Air and TW must **each run one slider retest**. Only after
+**both pass** may the external box use its **box source token** to submit a small
+job that creates the confirmation file. If either retest fails, do not write the
+confirmation file; let the confirmation deadline trigger automatic rollback.
+
+The confirmation file must be owned by the bridge user, regular, non-symlink,
+mode 0600, containing exactly the nonce and one newline. Use a fresh nonce and a
+previously absent private file path for every attempt: startup refuses an existing
+path, including a dangling symlink. Have the box job create a temporary file with
+mode 0600 **in the same directory**, write the nonce and newline, flush/fsync and
+close it, then rename it atomically to the confirmation path. Do not prepare the
+confirmation file locally: this step proves the external job path. Missing, empty,
+short, newline-incomplete or not-yet-0600 files keep waiting until the deadline.
+A symlink, non-regular file, wrong owner, or complete wrong content fails at once.
+The default confirmation deadline is 600 seconds; timeout, unsafe file or
 wrong content restores the snapshot. While waiting, the listener identity is
 checked every two seconds. After confirmation, watch for 300 seconds, checking
 every 30 seconds and at the end: changed PID, lost listener or release argv mismatch
@@ -175,13 +184,26 @@ is not counted. Current remains mandatory even when next is valid.
 
 ## HMAC challenge (box identity proof)
 
-Use `ops/token-provision/hmac_challenge.py make --token-file /private/box-current`
-on one endpoint. Transfer only its JSON `nonce` and `mac` to the other, then run
-`hmac_challenge.py verify --token-file /private/box-current --nonce <nonce> --mac <mac>`.
-The nonce is 32 random bytes; the proof is HMAC-SHA256(token, nonce). Verification
-prints only `match` (exit 0) or `mismatch` (exit 1); no token or token hash is exposed.
-Use fresh challenges over an authenticated channel; this proves possession, not
-network origin or replay resistance by itself. File checks match the bridge's.
+The **verifier** generates a fresh challenge first, saving it at a previously
+absent private path (0600). These commands use only credential paths, never values:
+
+```sh
+# Verifier: generate and retain the challenge; this command prints nothing.
+python3 ops/token-provision/hmac_challenge.py verify --token-file /private/box-current \
+  --challenge-file /private/hmac-nonce --new-challenge
+# Transfer only the nonce from that file to the maker over an authenticated channel.
+python3 ops/token-provision/hmac_challenge.py make --token-file /private/box-current --nonce <verifier-nonce>
+# Transfer the returned JSON mac to the verifier. Its saved challenge is consumed.
+python3 ops/token-provision/hmac_challenge.py verify --token-file /private/box-current \
+  --challenge-file /private/hmac-nonce --mac <response-mac>
+```
+
+The nonce is 32 random bytes; the proof is HMAC-SHA256(token, nonce). The make
+command requires the verifier's nonce and cannot select its own. Final verification
+prints only `一致` (exit 0) or `不一致` (exit 1); no token or token hash is exposed.
+Each verification consumes its local challenge, even on mismatch; generate a new
+challenge before retrying. This proves possession, not network origin. Token and
+challenge paths must be owned regular non-symlink files, mode 0600.
 
 ## Relay identity risk
 
@@ -202,3 +224,17 @@ on macOS, for the same absence. Automate the comparison in memory and emit only
 pass/fail; never dump a real process environment or use a real token for this check.
 Also check the dispatcher and relay process chain. Header bytes should exist only
 in private token files, process memory and fd 3, never argv, exported variables or logs.
+
+## Codex sandbox migration
+
+The code default is `codex.sandbox = "workspace-write"`, with
+`approval_policy = "never"`. If the migrated deployment depends on
+`danger-full-access` (for example browser or slider jobs), production configuration
+must explicitly set `codex.sandbox = "danger-full-access"`. Review that choice
+before switching; the startup log reports the actual sandbox and approval policy.
+Token paths (current and next) must not be symlinks.
+
+Cutover retries lsof command errors twice before treating the third consecutive
+failure as a failed listener observation. Unsafe or mismatched output fails
+immediately; failed observations reset PID stability. An old `/health` returning
+200 cannot pass the tokenless 403 self-check or mark rollback healthy in state.

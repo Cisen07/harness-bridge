@@ -51,8 +51,47 @@ def owned_file(path, modes, limit):
         os.close(fd)
 
 
+def require_absent_confirmation(path):
+    if path is not None and os.path.lexists(path):
+        raise ValueError('confirmation file already exists')
+
+
+def confirmation(path, nonce):
+    """Return False while a producer is writing; reject unsafe or complete wrong files."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        return False
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid():
+            raise ValueError('unsafe confirmation file')
+        with os.fdopen(fd, 'rb', closefd=False) as stream:
+            data = stream.read(4097)
+        if stat.S_IMODE(info.st_mode) != 0o600:
+            return False
+        expected = (nonce + '\n').encode('ascii')
+        if not data or not data.endswith(b'\n') or len(data) < len(expected):
+            return False
+        if not hmac.compare_digest(data, expected):
+            raise ValueError('confirmation mismatch')
+        return True
+    finally:
+        os.close(fd)
+
+
+def lsof_output(port):
+    # Tolerate two transient command failures; unsafe listener output still fails at once.
+    for attempt in range(3):
+        try:
+            return run(['/usr/sbin/lsof', '-nP', '-a', '-iTCP:' + str(port), '-sTCP:LISTEN', '-Fpn'])
+        except (OSError, subprocess.SubprocessError):
+            if attempt == 2:
+                raise
+
+
 def listener(host, port, label=None, release=None):
-    output = run(['/usr/sbin/lsof', '-nP', '-a', '-iTCP:' + str(port), '-sTCP:LISTEN', '-Fpn'])
+    output = lsof_output(port)
     pid, found = None, set()
     for line in output.splitlines():
         if line.startswith('p'):
@@ -107,7 +146,7 @@ def check(host, port, url=None, clock=time.monotonic, sleep=time.sleep, label=No
         except ValueError:
             return {'listener': False, 'pid_stable': False, 'self_check': False}
         except (OSError, subprocess.SubprocessError):
-            result['listener'] = False
+            result.update(listener=False, pid_stable=False, self_check=url is None)
             stable_since = None
             last = None
         sleep(min(2, max(0, 60 - (clock() - start))))
@@ -126,6 +165,7 @@ def success(checks):
 def execute(a, target, clock=None, sleep=None):
     clock = clock or time.monotonic
     sleep = sleep or time.sleep
+    require_absent_confirmation(getattr(a, 'confirm_file', None))
     snapshot = owned_file(a.plist_snapshot, {0o600, 0o644}, 1024 * 1024)
     state = {'phase': 'armed', 'rolled_back': False, 'checks': {}}
     domain = 'gui/%d' % os.getuid()
@@ -181,13 +221,7 @@ def execute(a, target, clock=None, sleep=None):
         deadline = clock() + a.confirm_timeout
         while True:
             unchanged(pid)
-            try:
-                data = owned_file(a.confirm_file, {0o600}, 4096)
-            except FileNotFoundError:
-                data = None
-            if data is not None:
-                if not hmac.compare_digest(data, (a.confirm_nonce + '\n').encode('ascii')):
-                    raise ValueError('confirmation mismatch')
+            if confirmation(a.confirm_file, a.confirm_nonce):
                 break
             if clock() >= deadline:
                 raise TimeoutError('confirmation timeout')
@@ -233,6 +267,10 @@ def main():
         p.error('invalid confirmation nonce')
     if a.expect_release and (not Path(a.expect_release).is_absolute() or str(Path(a.expect_release).resolve()) == '/'):
         p.error('expect-release must be an absolute release directory')
+    try:
+        require_absent_confirmation(a.confirm_file)
+    except ValueError as error:
+        p.error(str(error))
     owned_file(a.plist_snapshot, {0o600, 0o644}, 1024 * 1024)
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{2,120}', a.label) or a.delay < 0:
         p.error('invalid label/delay')

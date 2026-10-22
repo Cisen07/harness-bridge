@@ -36,12 +36,31 @@ def main():
     make.add_argument('--token-file', required=True)
     verify = sub.add_parser('verify')
     verify.add_argument('--token-file', required=True)
-    verify.add_argument('--nonce', required=True)
-    verify.add_argument('--mac', required=True)
+    make.add_argument('--nonce', required=True)
+    verify.add_argument('--challenge-file', required=True)
+    actions = verify.add_mutually_exclusive_group(required=True)
+    actions.add_argument('--new-challenge', action='store_true')
+    actions.add_argument('--mac')
     args = parser.parse_args()
+    if args.action == 'verify' and args.new_challenge:
+        try:
+            fd = os.open(args.challenge_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, 'w') as stream:
+                stream.write(secrets.token_hex(32) + '\n')
+                stream.flush()
+                os.fsync(stream.fileno())
+            return 0
+        except OSError:
+            return 1
     try:
+        if args.action == 'make':
+            raw_nonce = args.nonce
+        else:
+            raw_nonce = read_token(args.challenge_file).decode('ascii')
+            # Consume the verifier's saved challenge before checking a response.
+            os.unlink(args.challenge_file)
         token = read_token(args.token_file)
-        nonce = secrets.token_bytes(32) if args.action == 'make' else bytes.fromhex(args.nonce)
+        nonce = bytes.fromhex(raw_nonce)
         if len(nonce) != 32:
             raise ValueError('invalid nonce')
         mac = hmac.new(token, nonce, hashlib.sha256).digest()
@@ -54,7 +73,7 @@ def main():
         if args.action == 'make':
             return 1
         match = False
-    print('match' if match else 'mismatch')
+    print('一致' if match else '不一致')
     return 0 if match else 1
 
 
