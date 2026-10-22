@@ -8,7 +8,8 @@ Configuration (nothing host-specific is hard-coded):
   HARNESS_HOME            base dir (default ~/harness): bin/tailscale, run/tailscaled.sock, ssh/, direct-jobs/
   HARNESS_TARGETS         targets file (default $HARNESS_HOME/targets.json, see targets.example.json)
   HARNESS_SSH_PROXY       "tailscale-nc" (default: userspace tailscaled via `tailscale nc`) or "none"
-  HARNESS_WAKE_URL_PREFIX optional; when set, wake.url must start with it (recommended)
+  HARNESS_WAKE_URL_PREFIX required for wake; exact HTTPS origin and optional path boundary
+  HARNESS_WAKE_KEY_ENV    permitted key environment variable (default HARNESS_WAKE_KEY)
 Usage: targets | submit (JSON on stdin) | status JOB_ID
 """
 import fcntl
@@ -21,6 +22,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+from urllib.parse import urlparse
 import uuid
 
 BASE = pathlib.Path(os.environ.get('HARNESS_HOME') or os.path.expanduser('~/harness'))
@@ -211,14 +213,25 @@ def load_session_models(backend):
 
 def parse(engine, text):
     session, result, failed, denials, models, warnings = None, [], False, [], [], []
+    terminal = False
     for line in text.splitlines():
         try:
             e = json.loads(line)
         except ValueError:
             continue
+        if not isinstance(e, dict):
+            raise ValueError('Invalid agent event object')
         if engine == 'codex':
+            if e.get('type') == 'turn.completed':
+                terminal = True
+            if e.get('type') == 'item.completed':
+                item = e.get('item')
+                if not isinstance(item, dict) or (item.get('type') == 'agent_message' and not isinstance(item.get('text'), str)):
+                    raise ValueError('Invalid Codex item fields')
             if e.get('type') == 'thread.started':
-                session = e.get('thread_id')
+                if not isinstance(e.get('thread_id'), str) or not e['thread_id']:
+                    raise ValueError('Invalid Codex thread ID')
+                session = e['thread_id']
             if e.get('type') == 'item.completed' and e.get('item', {}).get('type') == 'agent_message':
                 result.append(e['item'].get('text', ''))
             if e.get('type') == 'item.completed' and e.get('item', {}).get('type') == 'error':
@@ -226,6 +239,7 @@ def parse(engine, text):
                 warnings.append(str(e['item'].get('message', ''))[:500])
             if e.get('type') in ('turn.failed', 'error'):
                 failed = True
+                terminal = True
         else:
             session = e.get('session_id') or session
             if e.get('type') == 'system' and e.get('subtype') == 'init' and e.get('model'):
@@ -233,9 +247,16 @@ def parse(engine, text):
             if e.get('type') == 'result' and isinstance(e.get('modelUsage'), dict):
                 models += [str(m) for m in e['modelUsage']]
             if e.get('type') == 'result':
-                result = [str(e.get('result', ''))]
-                failed = bool(e.get('is_error'))
+                if (not isinstance(e.get('session_id'), str) or not e['session_id']
+                        or not isinstance(e.get('result', ''), str)
+                        or not isinstance(e.get('permission_denials', []), list)):
+                    raise ValueError('Invalid Claude result fields')
+                terminal = True
+                result = [e.get('result', '')]
+                failed = bool(e.get('is_error')) or e.get('subtype', 'success') != 'success'
                 denials = e.get('permission_denials', [])
+    if not terminal:
+        raise ValueError('Missing agent terminal event')
     out = dict(session_id=session, result='\n'.join(result)[-48000:], failed=failed, permission_denials=denials,
                observed_models=list(dict.fromkeys(models)))
     if warnings:
@@ -271,6 +292,7 @@ def record_codex_session(job):
 
 
 WAKE_URL_PREFIX = os.environ.get('HARNESS_WAKE_URL_PREFIX', '')
+WAKE_KEY_ENV = os.environ.get('HARNESS_WAKE_KEY_ENV', 'HARNESS_WAKE_KEY')
 ENV_NAME_RE = re.compile(r'^[A-Z_][A-Z0-9_]{0,63}$')
 
 
@@ -279,16 +301,39 @@ def validate_wake(wake):
     if not isinstance(wake, dict) or set(wake) - {'url', 'key_env'}:
         raise ValueError('wake must be {"url", "key_env"}')
     url, key_env = wake.get('url'), wake.get('key_env')
-    if (not isinstance(url, str) or not url.startswith('https://') or not url.startswith(WAKE_URL_PREFIX)
-            or not re.fullmatch(r'[A-Za-z0-9:/._\-]+', url)):
-        raise ValueError('wake.url must be an https webhook URL (matching HARNESS_WAKE_URL_PREFIX when set)')
-    if not isinstance(key_env, str) or not ENV_NAME_RE.match(key_env):
-        raise ValueError('wake.key_env must be an environment variable name')
+    def endpoint(value):
+        if not isinstance(value, str) or not value or any(c.isspace() or ord(c) < 32 for c in value):
+            raise ValueError('Invalid wake URL configuration')
+        parsed = urlparse(value)
+        if (parsed.scheme != 'https' or not parsed.hostname or parsed.username is not None
+                or parsed.password is not None or parsed.fragment or parsed.query
+                or '%' in parsed.netloc or '\\' in value):
+            raise ValueError('wake URL must be HTTPS without userinfo, query or fragment')
+        return parsed, (parsed.scheme, parsed.hostname.lower(), parsed.port if parsed.port is not None else 443)
+
+    target, origin = endpoint(url)
+    allowed, allowed_origin = endpoint(WAKE_URL_PREFIX)
+    base_path = allowed.path.rstrip('/')
+    if origin != allowed_origin or (base_path and target.path != base_path
+                                   and not target.path.startswith(base_path + '/')):
+        raise ValueError('wake.url does not match the configured HTTPS origin/path')
+    if (not isinstance(key_env, str) or not ENV_NAME_RE.fullmatch(key_env)
+            or key_env != WAKE_KEY_ENV):
+        raise ValueError('wake.key_env must match HARNESS_WAKE_KEY_ENV')
     return dict(url=url, key_env=key_env)
+
+
+class NoWebhookRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 
 def send_wake(job, wake):
     """POST job_id/status only (never the result text); failures are recorded, never fatal. Key never stored."""
+    try:
+        wake = validate_wake(wake)
+    except ValueError:
+        return dict(ok=False, error='Invalid wake configuration')
     key = os.environ.get(wake['key_env'])
     if not key:
         return dict(ok=False, error='wake key env not set in worker environment')
@@ -299,7 +344,7 @@ def send_wake(job, wake):
                                  headers={'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key})
     for attempt in range(3):
         try:
-            with urllib.request.urlopen(req, timeout=20) as resp:
+            with urllib.request.build_opener(NoWebhookRedirect()).open(req, timeout=20) as resp:
                 return dict(ok=200 <= resp.status < 300, http=resp.status, attempts=attempt + 1)
         except urllib.error.HTTPError as e:
             if e.code < 500:
@@ -316,8 +361,9 @@ def worker(job_id):
     job = json.loads(path.read_text())
     job.update(status='running', worker_pid=os.getpid())
     write(path, job)
-    request = json.loads((STATE / (job_id + '.request')).read_text())
+    request = {}
     try:
+        request = json.loads((STATE / (job_id + '.request')).read_text())
         engine = TARGETS[job['backend']][4]
         if engine == 'codex':
             args = command(job['backend'], request.get('session_id'), job.get('model'), job.get('effort'))
@@ -346,8 +392,9 @@ def worker(job_id):
             diagnostic = STATE / (job_id + '.stderr')
             diagnostic.write_text(p.stderr)
             diagnostic.chmod(0o600)
-    except (OSError, RuntimeError, subprocess.SubprocessError) as e:
-        job.update(status='failed', error=str(e))
+    except Exception as e:
+        # Detached workers must persist a terminal state even on malformed protocol data.
+        job.update(status='failed', error='Agent execution or output parsing failed (' + type(e).__name__ + ')')
     write(path, job)
     if request.get('wake'):
         job['wake'] = dict(send_wake(job, request['wake']), at=time.time())

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Print a short summary of one job JSON and optionally append a ledger line.
 usage: _job_summary.py <job.json> <kind:direct|mac> <host-label> <bot> [ledger_path|-]"""
-import json, sys, time, datetime, pathlib
+import json, sys, time, datetime, pathlib, os
 
 TERMINAL = {'completed', 'failed', 'interrupted', 'needs_attention'}
 
@@ -63,9 +63,12 @@ def main():
                    kind=kind, host=host, job_id=j.get('job_id'), backend=j.get('backend'), model=model,
                    effort=effort, status=st, exit_code=j.get('exit_code'), result_chars=len(res), tokens=tok)
         p = pathlib.Path(ledger)
-        seen = p.exists() and any(('"job_id": "%s"' % j.get('job_id')) in l for l in p.read_text().splitlines())
-        if not seen:  # one line per job, even if wait is re-run
-            with p.open('a') as f:
+        fd = os.open(p, os.O_RDWR | os.O_CREAT | os.O_APPEND, 0o600)
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, 'a+') as f:
+            f.seek(0)
+            seen = any(('"job_id": "%s"' % j.get('job_id')) in line for line in f)
+            if not seen:  # one line per job, even if wait is re-run
                 f.write(json.dumps(rec, ensure_ascii=False) + '\n')
 
 

@@ -26,8 +26,11 @@ are accepted; anything else disables the push (log line `Terminal webhook failed
 
 ## 2b. SSH mode: wake field
 Store the key in an environment variable of the dispatcher process (e.g. `HARNESS_WAKE_KEY`), set
-`HARNESS_WAKE_URL_PREFIX` to your webhook host prefix, and submit with
-`"wake": {"url": "<your_endpoint>", "key_env": "HARNESS_WAKE_KEY"}`. The worker adds the `Bearer ` prefix itself.
+`HARNESS_WAKE_URL_PREFIX` to your trusted HTTPS origin (optionally with a path), and submit with
+`"wake": {"url": "<your_endpoint>", "key_env": "HARNESS_WAKE_KEY"}`. The worker adds the `Bearer ` prefix itself. Wake is disabled without this trusted origin.
+Scheme, hostname and effective port must match exactly; a configured path matches only itself or descendants.
+Userinfo, query strings, fragments and redirects are refused. Only `HARNESS_WAKE_KEY` may be selected
+unless the trusted dispatcher environment sets `HARNESS_WAKE_KEY_ENV` to another key variable.
 
 ## 3. Self-test
 1. Submit a tiny job (`"prompt": "reply OK"`), end the turn.
@@ -38,11 +41,16 @@ Store the key in an environment variable of the dispatcher process (e.g. `HARNES
 ## Troubleshooting
 | Symptom | Cause |
 |---|---|
-| `Terminal webhook failed (HTTPError)` | 401: wrong `WEBHOOK_AUTH` format or rotated key; 404: wrong URL |
-| `Terminal webhook failed (ValueError)` | unknown key in webhook.conf, non-http(s) URL, or a 3xx redirect (refused on purpose) |
+| `Terminal webhook failed (HTTPError)` | 401: wrong `WEBHOOK_AUTH` format or rotated key; 404: wrong URL; 3xx: redirect refused |
+| `Terminal webhook failed (ValueError)` | unknown key in webhook.conf, non-http(s) URL |
 | `Terminal webhook failed (URLError/TimeoutError)` | Mac has no outbound internet, or a proxy is needed (see launchd template) |
 | No log line, no wake | `webhook.conf` missing or a value empty (push silently disabled) |
 | Wake arrives, job still running | impossible by design; check you read the job id from the payload |
 
 ## Payloads
 Bridge: `{"job_id","status","backend","host"}`. SSH worker: `{"job_id","backend","status","exit_code","model","effort","finished_at"}`.
+
+## Timeout boundary
+Mac CLI jobs run in a new process group; on timeout the bridge kills that group. Descendants
+that explicitly escape the group are outside this guarantee. SSH timeouts only stop the local
+transport; they do not guarantee remote processes have stopped. Inspect the remote host before retrying.

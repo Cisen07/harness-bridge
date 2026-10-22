@@ -56,3 +56,7 @@ machine that uses them; webhook payloads never contain job output.
 
 ## License
 MIT - see [LICENSE](LICENSE).
+
+Timeouts: the Mac bridge kills the CLI process group, including descendants that remain in that group.
+An SSH timeout does not guarantee remote processes have stopped; inspect the host before retrying.
+See [webhook and timeout behavior](docs/webhook-wake.md).

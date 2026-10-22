@@ -128,8 +128,8 @@ def authorized(address):
         return False
 
 
-def run_claude(cmd, prompt):
-    """Keep Claude and shell descendants in a killable session on timeout."""
+def run_agent(cmd, prompt):
+    """Keep the CLI and shell descendants in a killable session on timeout."""
     process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, text=True, cwd=WORKSPACE,
                                start_new_session=True)
@@ -169,11 +169,7 @@ def run_job(job_id, prompt, session_id, backend='mac-codex', model=None, effort=
         save()
     try:
         cmd = command_for(backend, session_id, model, effort)
-        if backend == 'mac-claudecode':
-            result = run_claude(cmd, prompt)
-        else:
-            result = subprocess.run(cmd, input=prompt, capture_output=True, text=True,
-                                    cwd=WORKSPACE, timeout=JOB_TIMEOUT)
+        result = run_agent(cmd, prompt)
         parsed = parse_events(BACKENDS[backend]['engine'], result.stdout)
         actual_session = parsed['session_id']
         if session_id and actual_session and actual_session != session_id:

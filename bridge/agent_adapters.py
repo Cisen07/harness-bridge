@@ -226,6 +226,7 @@ def parse_events(engine, stdout):
     messages = []
     warnings = []
     failed = False
+    terminal = False
     denials = []
     for line in stdout.splitlines():
         try:
@@ -233,16 +234,27 @@ def parse_events(engine, stdout):
         except ValueError:
             continue
         if not isinstance(event, dict):
+            failed = True
             continue
+        if event.get('type') == 'turn.completed':
+            terminal = True
         if event.get('type') == 'thread.started':
-            session = event.get('thread_id')
+            if isinstance(event.get('thread_id'), str) and event['thread_id']:
+                session = event['thread_id']
+            else:
+                failed = True
         item = event.get('item') if isinstance(event.get('item'), dict) else {}
+        if event.get('type') == 'item.completed' and not item:
+            failed = True
         if event.get('type') == 'item.completed' and item.get('type') == 'agent_message':
-            messages.append(item.get('text', ''))
+            if isinstance(item.get('text'), str):
+                messages.append(item['text'])
+            else:
+                failed = True
         if event.get('type') == 'item.completed' and item.get('type') == 'error':
             # Non-fatal notices, e.g. "session was recorded with model X but is resuming with Y".
             warnings.append(str(item.get('message', ''))[:500])
         if event.get('type') in ('error', 'turn.failed'):
             failed = True
     return dict(session_id=session, result='\n'.join(messages)[-48000:],
-                failed=failed, permission_denials=denials, models=[], warnings=warnings)
+                failed=failed or not terminal, permission_denials=denials, models=[], warnings=warnings)

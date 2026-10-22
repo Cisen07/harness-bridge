@@ -93,7 +93,8 @@ class Adapters(unittest.TestCase):
         out = '\n'.join(json.dumps(e) for e in [
             {'type': 'thread.started', 'thread_id': 't1'},
             {'type': 'item.completed', 'item': {'type': 'error', 'message': 'notice'}},
-            {'type': 'item.completed', 'item': {'type': 'agent_message', 'text': 'done'}}])
+            {'type': 'item.completed', 'item': {'type': 'agent_message', 'text': 'done'}},
+            {'type': 'turn.completed', 'usage': {}}])
         r = A.parse_events('codex', out)
         self.assertEqual((r['session_id'], r['result'], r['failed'], r['warnings']), ('t1', 'done', False, ['notice']))
         c = A.parse_events('claude', 'banner\n' + json.dumps({'type': 'result', 'session_id': 's', 'result': 'ok',

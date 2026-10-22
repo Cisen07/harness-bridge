@@ -27,7 +27,8 @@ running that CLI under the target account. Report only what the job record shows
 ## Waiting: webhook wake first
 - Create one webhook-triggered routine per bot. The user stores the routine key in an environment variable of the
   dispatcher (never printed, never written to disk); the URL may live in a file. Set `HARNESS_WAKE_URL_PREFIX`
-  so only your webhook host is accepted.
+  to the trusted HTTPS origin (optional path boundary); it is required for wake.
+  Only `HARNESS_WAKE_KEY` may be selected unless the dispatcher sets `HARNESS_WAKE_KEY_ENV`. Redirects are refused.
 - With `wake`, end the turn right after submit. On terminal state the worker POSTs job_id/status/backend/model/effort/
   exit_code (no result text) with `Authorization: Bearer <key>`, retrying 5xx up to 3 times; the outcome is stored in
   the job's `wake` field. On wake, read the job file and report.
