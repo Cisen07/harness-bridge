@@ -17,6 +17,7 @@ id_ed25519*
 id_rsa*
 known_hosts
 *token*
+!*.token.example
 !scripts/*token*
 headers.txt
 device-code*

@@ -6,6 +6,10 @@
 bind_host   = "100.x.y.z"        # this Mac's tailnet IP (`tailscale ip -4`). Never 0.0.0.0.
 port        = 18542              # default; any free port works, keep ACL + dispatcher in sync
 host_label  = "mac-a"            # short label sent as "host" in the webhook payload
+require_token = true            # default; disabling removes application authentication
+# token_file = "/path/to/bridge.token"  # default: <bridge dir>/bridge.token; owned file, mode 0600
+# HARNESS_BRIDGE_TOKEN_FILE overrides token_file (path only; never the token itself)
+# webhook_url_prefix = "https://hooks.example/hook" # optional exact origin + path boundary allowlist
 max_workers = 4                  # concurrent jobs shared by both backends
 job_timeout_seconds = 3600
 max_body_bytes = 16000

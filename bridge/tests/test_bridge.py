@@ -2,6 +2,8 @@
 
 Uses only RFC 5737 / loopback addresses and *.example.ts.net names. No network access beyond 127.0.0.1.
 """
+import atexit
+import shutil
 import http.server
 import json
 import os
@@ -16,12 +18,15 @@ from unittest import mock
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
-TMP = pathlib.Path(tempfile.mkdtemp())
+TMP = pathlib.Path(tempfile.mkdtemp(dir=HERE.parents[1]))
+atexit.register(shutil.rmtree, TMP)
 (TMP / 'ws').mkdir()
+(TMP / 'bridge.token').write_text('test-key\n')
+(TMP / 'bridge.token').chmod(0o600)
 CONF = {
     'server': {'bind_host': '127.0.0.1', 'port': 0, 'host_label': 'mac-test',
                'journal': str(TMP / 'jobs.json'), 'webhook_conf': str(TMP / 'webhook.conf'),
-               'tailscale_bin': '/nonexistent/tailscale'},
+               'token_file': str(TMP / 'bridge.token'), 'tailscale_bin': '/nonexistent/tailscale'},
     'workspace': {'path': str(TMP / 'ws')},
     'codex': {'bin': '/opt/test/codex', 'home': str(TMP / 'codex-home')},
     'claude': {'bin': 'claude', 'path_prepend': ['/opt/test/bin']},
@@ -221,7 +226,8 @@ class Api(unittest.TestCase):
     def call(self, method, path, body=None):
         data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(self.base + path, data=data, method=method,
-                                     headers={'Content-Type': 'application/json'})
+                                     headers={'Content-Type': 'application/json', 'Host': f'{B.HOST}:{B.PORT}',
+                                              'Authorization': 'Bearer test-key'})
         try:
             with urllib.request.urlopen(req, timeout=5) as r:
                 return r.status, json.loads(r.read())

@@ -39,3 +39,7 @@ Response `202 {"job_id": "<uuid>", "status": "queued"}`. Errors: `400 {"error": 
 ## Limits
 `max_workers` concurrent jobs (default 4) across both backends; `job_timeout_seconds` per job (default 3600; the
 Claude process group is killed on timeout).
+
+All routes also require a shared Bearer credential from an owned 0600 token file (SECURITY.md).
+POST /jobs requires Content-Type: application/json (415 otherwise), rejects any Origin or Sec-Fetch-Site
+header (403), and requires Host exactly equal to the configured bind_host:port (403).

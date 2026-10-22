@@ -46,3 +46,23 @@ Then wait for the push and `GET /jobs/<id>`.
 
 ## Upgrades
 Follow deploy-and-rollback.md (sha check, `cp -p` backup, py_compile, detached restart, smoke test).
+
+## Required API token
+
+Before starting, generate one random shared token (see SECURITY.md), provision it separately on the Mac
+and dispatcher using `bridge/bridge.token.example` and `dispatcher/bridge.token.example` as format examples,
+and chmod both files 600. Set `[server] token_file` or `HARNESS_BRIDGE_TOKEN_FILE` on the bridge;
+export `HARNESS_BRIDGE_TOKEN_FILE` on the dispatcher. Defaults are `<bridge dir>/bridge.token` and
+`$HARNESS_HOME/bridge.token`. Missing credentials reject requests; provision them before upgrading.
+For manual curl, use the repository's header helper without exposing the token in argv:
+
+```bash
+AUTH_HEADER=$(python3 dispatcher/bin/_bridge_auth.py) || exit 1
+curl -H @/dev/fd/3 3<<<"$AUTH_HEADER" --proxy socks5h://127.0.0.1:10555 --noproxy '' http://<mac-ip>:18542/health
+# Add -H 'Content-Type: application/json' and --data-binary @request.json for POST /jobs.
+unset AUTH_HEADER
+```
+
+Apply the same header to the earlier smoke-test commands. Do not add Origin or Sec-Fetch-Site headers;
+Host must be the configured bind_host:port. Keep `_bridge_auth.py` alongside installed dispatcher bin scripts.
+The userspace tailscaled default is 1.104.2; follow official Tailscale security bulletins and update it promptly.

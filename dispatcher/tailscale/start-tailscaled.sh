@@ -8,7 +8,7 @@ umask 077
 D="$(cd "$(dirname "$0")/../bin" && pwd)"; . "$D/_env.sh"
 B="$HARNESS_HOME"
 PORT="${HARNESS_SOCKS_ADDR##*:}"
-VER="${TS_VERSION:-1.104.1}"
+VER="${TS_VERSION:-1.104.2}"
 F="tailscale_${VER}_amd64.tgz"
 mkdir -p "$B/bin" "$B/state" "$B/run" "$B/dl"; chmod 700 "$B" "$B/state" "$B/run"
 if [ ! -x "$B/bin/tailscaled" ] || [ ! -x "$B/bin/tailscale" ]; then

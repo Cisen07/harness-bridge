@@ -7,6 +7,8 @@
 #   WRONG: WEBHOOK_AUTH=Authorization: Bearer <key>   -> header "Authorization: Authorization: Bearer ..." -> 401
 #   WRONG: WEBHOOK_AUTH=<key>                         -> missing "Bearer " -> 401 on Bearer-auth endpoints
 #
+# URL policy: HTTPS; HTTP only for literal loopback or 100.64.0.0/10 addresses.
+# Set server.webhook_url_prefix in config.toml to pin the origin and optional path boundary.
 # Leaving either value empty (or deleting this file) disables the push; the bridge keeps working.
 WEBHOOK_URL=<your_endpoint>
 WEBHOOK_AUTH=Bearer <your_key>

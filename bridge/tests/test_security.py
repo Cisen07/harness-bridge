@@ -1,4 +1,5 @@
 """Regression tests for review F1-F6; synthetic CLI data and loopback only."""
+import http.client
 import http.server
 import importlib.util
 import json
@@ -141,7 +142,7 @@ class PrivateFilesAndProcesses(unittest.TestCase):
                 ledger.write_text('')
                 ledger.chmod(0o644)
                 env = dict(os.environ, HARNESS_HOME=folder, HARNESS_HOSTS_FILE=str(base / 'absent'),
-                           HARNESS_LEDGER=str(ledger), PATH=folder + os.pathsep + os.environ['PATH'])
+                           HARNESS_LEDGER=str(ledger), HARNESS_BRIDGE_TOKEN_FILE=str(T.TMP / 'bridge.token'), PATH=folder + os.pathsep + os.environ['PATH'])
                 run = subprocess.run(['bash', '-c', 'umask 022; exec bash "$@"', 'test',
                                       str(ROOT / 'dispatcher/bin/mac_wait.sh'), '127.0.0.1:1',
                                       str(uuid.uuid4()), str(output), '--max', '0'],
@@ -171,3 +172,192 @@ class PrivateFilesAndProcesses(unittest.TestCase):
                 self.assertFalse(marker.exists(), 'descendant survived the process group timeout')
             finally:
                 T.B.JOBS.pop(jid, None)
+
+
+class HttpBoundary(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), T.B.Handler)
+        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
+
+    def call(self, extra=None, omit=(), method='POST'):
+        headers = {'Host': f'{T.B.HOST}:{T.B.PORT}', 'Content-Type': 'application/json',
+                   'Authorization': 'Bearer test-key'}
+        headers.update(extra or {})
+        for key in omit:
+            headers.pop(key, None)
+        conn = http.client.HTTPConnection('127.0.0.1', self.server.server_port, timeout=5)
+        try:
+            with mock.patch.object(T.B, 'authorized', return_value=True), mock.patch.object(T.B.POOL, 'submit'):
+                conn.request(method, '/jobs' if method == 'POST' else '/health',
+                             body=b'{"prompt":"test"}' if method == 'POST' else None, headers=headers)
+                response = conn.getresponse()
+                response.read()
+                return response.status
+        finally:
+            conn.close()
+
+    def test_json_required(self):
+        for headers, omit in (({}, ('Content-Type',)), ({'Content-Type': 'text/plain'}, ())):
+            self.assertEqual(self.call(headers, omit), 415)
+        self.assertEqual(self.call({'Content-Type': 'application/json; charset=utf-8'}), 202)
+
+    def test_browser_headers_forbidden_even_empty(self):
+        for name in ('Origin', 'Sec-Fetch-Site'):
+            for value in ('', 'same-origin', 'https://attacker.example'):
+                self.assertEqual(self.call({name: value}), 403)
+
+    def test_exact_host_required(self):
+        for host in ('attacker.example', 'localhost:18542', T.B.HOST):
+            self.assertEqual(self.call({'Host': host}), 403)
+        self.assertEqual(self.call(), 202)
+
+    def test_bearer_required_for_read_and_write(self):
+        for method in ('GET', 'POST'):
+            self.assertEqual(self.call(omit=('Authorization',), method=method), 403)
+            for auth in ('Bearer wrong', 'Basic test-key', 'Bearer test-key extra'):
+                self.assertEqual(self.call({'Authorization': auth}, method=method), 403)
+            self.assertEqual(self.call(method=method), 200 if method == 'GET' else 202)
+
+    def test_token_files_fail_closed_and_opt_out(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as folder:
+            path = pathlib.Path(folder) / 'credential'
+            with mock.patch.dict(os.environ, HARNESS_BRIDGE_TOKEN_FILE=str(path)):
+                self.assertEqual(self.call(), 403)
+                for content, mode in (('', 0o600), ('test-key', 0o644), ('bad\nheader', 0o600)):
+                    path.write_text(content)
+                    path.chmod(mode)
+                    self.assertEqual(self.call(), 403)
+                path.write_text('test-key\n')
+                path.chmod(0o600)
+                self.assertEqual(self.call(), 202)
+                with mock.patch.dict(T.B._SERVER, require_token=False):
+                    path.unlink()
+                    self.assertEqual(self.call(omit=('Authorization',)), 202)
+
+    def test_read_timeout(self):
+        self.assertEqual(T.B.Handler.timeout, 30)
+
+
+class AdditionalPolicies(unittest.TestCase):
+    def test_webhook_transport_and_allowlist(self):
+        for url in ('http://127.0.0.1/hook', 'http://[::1]/hook', 'https://hooks.example/hook'):
+            T.B.validate_webhook_url(url)
+        import ipaddress
+        tailnet = str(ipaddress.ip_network('100.64.0.0/10').network_address + 1)
+        T.B.validate_webhook_url('http://' + tailnet + '/hook')
+        for url in ('http://hooks.example/hook', 'http://192.0.2.1/hook', 'ftp://hooks.example/hook',
+                    'https://user@hooks.example/hook', 'https://hooks.example/hook/../other'):
+            with self.subTest(url=url), self.assertRaises(ValueError):
+                T.B.validate_webhook_url(url)
+        with mock.patch.dict(T.B._SERVER, webhook_url_prefix='https://hooks.example/hook'):
+            T.B.validate_webhook_url('https://HOOKS.example:443/hook/child')
+            for url in ('https://evil.example/hook', 'https://hooks.example/hook-other',
+                        'https://hooks.example:444/hook', 'https://hooks.example/hook/%2e%2e/other'):
+                with self.assertRaises(ValueError):
+                    T.B.validate_webhook_url(url)
+
+    def test_wake_rejects_ambiguous_paths(self):
+        with mock.patch.object(S, 'WAKE_URL_PREFIX', 'https://hooks.example/hook'):
+            for path in ('../other', '%2e%2e/other', 'child;other', 'a..b'):
+                with self.assertRaises(ValueError):
+                    S.validate_wake({'url': 'https://hooks.example/hook/' + path, 'key_env': S.WAKE_KEY_ENV})
+
+    def test_ssh_destination_and_proxy_quoting(self):
+        target = ('host.example', 'user', '/', 'codex', 'codex', 'key', None)
+        with mock.patch.object(S, 'TARGETS', {'test': target}), mock.patch.object(S, 'BASE', pathlib.Path('/space dir')):
+            args = S.ssh_args('test', 'true')
+            self.assertEqual(args[-3:], ['--', 'user@host.example', 'true'])
+            self.assertIn("ProxyCommand='/space dir/bin/tailscale' --socket='/space dir/run/tailscaled.sock' nc %h %p", args)
+        for host, user in (('-oProxyCommand=evil', 'user'), ('host', 'user@evil'), ('host;evil', 'user')):
+            with mock.patch.object(S, 'TARGETS', {'test': (host, user, *target[2:])}), self.assertRaises(ValueError):
+                S.ssh_args('test', 'true')
+
+    def test_dispatcher_token_helper(self):
+        spec = importlib.util.spec_from_file_location('http_auth', ROOT / 'dispatcher/bin/_bridge_auth.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory(dir=ROOT) as folder:
+            path = pathlib.Path(folder) / 'credential'
+            with mock.patch.dict(os.environ, HARNESS_BRIDGE_TOKEN_FILE=str(path), HARNESS_BRIDGE_REQUIRE_TOKEN='1'):
+                with self.assertRaises(OSError):
+                    module.auth_header()
+                for text, mode in (('', 0o600), ('test-key', 0o644), ('bad\nheader', 0o600)):
+                    path.write_text(text)
+                    path.chmod(mode)
+                    with self.assertRaises(ValueError):
+                        module.auth_header()
+                path.write_text('test-key\n')
+                path.chmod(0o600)
+                self.assertEqual(module.auth_header(), 'Authorization: Bearer test-key')
+                with mock.patch.dict(os.environ, HARNESS_BRIDGE_REQUIRE_TOKEN='0'):
+                    self.assertEqual(module.auth_header(), '')
+
+    def test_summary_hides_denied_tool_input(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as folder:
+            path = pathlib.Path(folder) / 'job.json'
+            path.write_text(json.dumps({'permission_denials': [{'tool_name': 'Bash', 'tool_input': 'private-value'},
+                                                             'private-value']}))
+            result = subprocess.run([sys.executable, str(ROOT / 'dispatcher/bin/_job_summary.py'),
+                                     str(path), 'mac', 'test', 'test'], capture_output=True, text=True, check=True)
+            self.assertIn('Bash', result.stdout)
+            self.assertNotIn('private-value', result.stdout)
+
+    def test_relay_streams_auth_and_json_without_secret_in_argv(self):
+        # Replace only SSH/timeout with local adapters; exercise the real remote shell and curl.
+        server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), T.B.Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            with tempfile.TemporaryDirectory(dir=ROOT) as folder:
+                base = pathlib.Path(folder)
+                (base / 'ssh').write_text('#!/usr/bin/env python3\nimport os,sys\n'
+                                         'assert not any("test-key" in arg for arg in sys.argv)\n'
+                                         'assert sys.argv[-3] == "--"\n'
+                                         'os.execl("/bin/sh", "sh", "-c", sys.argv[-1])\n')
+                (base / 'timeout').write_text('#!/usr/bin/env python3\nimport os,sys\n'
+                                             'os.execvp(sys.argv[2],sys.argv[2:])\n')
+                for name in ('ssh', 'timeout'):
+                    (base / name).chmod(0o700)
+                env = dict(os.environ, PATH=folder + os.pathsep + os.environ['PATH'],
+                           HARNESS_HOME=folder, HARNESS_HOSTS_FILE=str(base / 'absent'),
+                           HARNESS_BRIDGE_REQUIRE_TOKEN='1',
+                           HARNESS_BRIDGE_TOKEN_FILE=str(T.TMP / 'bridge.token'),
+                           RELAY_SSH_TARGET='user@host.example', RELAY_SSH_KEY='unused',
+                           RELAY_TARGET_HOSTPORT='127.0.0.1:%d' % server.server_port)
+                with mock.patch.object(T.B, 'authorized', return_value=True), \
+                        mock.patch.object(T.B, 'PORT', server.server_port), mock.patch.object(T.B.POOL, 'submit') as submit:
+                    for method, path, body in (('GET', '/health', ''), ('POST', '/jobs', '{"prompt":"relay test"}')):
+                        result = subprocess.run(['bash', str(ROOT / 'dispatcher/relay/relay_via_host.sh'), method, path],
+                                                input=body, env=env, text=True, capture_output=True, timeout=10)
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        response = json.loads(result.stdout)
+                        self.assertTrue(response.get('ok') or response.get('status') == 'queued', response)
+                        self.assertNotIn('test-key', result.stdout + result.stderr)
+                    submit.assert_called_once()
+                env['HARNESS_BRIDGE_TOKEN_FILE'] = str(base / 'missing')
+                result = subprocess.run(['bash', str(ROOT / 'dispatcher/relay/relay_via_host.sh'), 'GET', '/health'],
+                                        env=env, text=True, capture_output=True, timeout=10)
+                self.assertEqual(result.returncode, 2)
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def test_duplicate_auth_and_unsafe_file_rejected(self):
+        from email.message import Message
+        headers = Message()
+        headers.add_header('Authorization', 'Bearer test-key')
+        with mock.patch.object(T.B.hmac, 'compare_digest', wraps=T.B.hmac.compare_digest) as compare:
+            self.assertTrue(T.B.bearer_authorized(headers))
+            compare.assert_called_once()
+        headers.add_header('Authorization', 'Bearer test-key')
+        self.assertFalse(T.B.bearer_authorized(headers))
+        with tempfile.TemporaryDirectory(dir=ROOT) as folder:
+            link = pathlib.Path(folder) / 'link'
+            link.symlink_to(T.TMP / 'bridge.token')
+            with mock.patch.dict(os.environ, HARNESS_BRIDGE_TOKEN_FILE=str(link)):
+                self.assertFalse(T.B.bearer_authorized(headers))

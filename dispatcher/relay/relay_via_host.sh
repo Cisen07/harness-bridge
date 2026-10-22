@@ -19,7 +19,7 @@
 #   5  SSH to the relay host failed (ssh exit 255)
 #   6  local overall timeout (the request may have reached the bridge: GET before re-POSTing)
 #   7  curl failed on the relay host (bridge unreachable, timeout; curl exit code on stderr)
-# Reads no token or key material; it only references the key file path.
+# Token header travels over SSH stdin, never command arguments or dry-run output.
 #
 # Relay-host hardening (recommended): put the key in authorized_keys with
 #   restrict,command="<a wrapper that only allows curl to $RELAY_TARGET_HOSTPORT>" ssh-ed25519 AAAA... relay
@@ -33,6 +33,7 @@ die() { local code=$1; shift; echo "relay_via_host: $*" >&2; exit "$code"; }
   || die 2 "set RELAY_SSH_TARGET, RELAY_SSH_KEY and RELAY_TARGET_HOSTPORT in $HARNESS_HOSTS_FILE"
 TARGET=$RELAY_TARGET_HOSTPORT
 RELAY=$RELAY_SSH_TARGET
+[[ "$RELAY" =~ ^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+$ ]] || die 2 "invalid relay user or host"
 KEY=$(harness_path "$RELAY_SSH_KEY")
 
 [ $# -eq 2 ] || die 2 "usage: $0 <GET|POST> <path>   (POST body on stdin)"
@@ -52,11 +53,13 @@ MAXT=${RELAY_MAX_TIME:-60}
 q() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
 
 URL="http://$TARGET$P"
-REMOTE="curl -sS --connect-timeout 10 -m $(q "$MAXT") -X $(q "$M")"
+REMOTE="IFS= read -r auth; curl -H @/dev/fd/3 -sS --connect-timeout 10 -m $(q "$MAXT") -X $(q "$M")"
 if [ "$M" = POST ]; then
   REMOTE="$REMOTE -H $(q 'Content-Type: application/json') --data-binary @-"
 fi
-REMOTE="$REMOTE -- $(q "$URL")"
+REMOTE="$REMOTE -- $(q "$URL") 3<<HARNESS_HEADER
+\$auth
+HARNESS_HEADER"
 
 if [ "${RELAY_DRYRUN:-0}" = 1 ]; then
   echo "DRYRUN remote: $REMOTE"; exit 0
@@ -65,12 +68,12 @@ fi
 SSH=(ssh -T -i "$KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15
   -o ServerAliveInterval=15 -o ServerAliveCountMax=3
   -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$B/ssh/known_hosts"
-  -o "ProxyCommand=$B/bin/tailscale --socket=$B/run/tailscaled.sock nc %h %p")
-# GET does not read stdin (-n) so the caller's stdin is not swallowed; POST streams stdin to curl's @- on the relay
-[ "$M" = GET ] && SSH+=(-n)
+  -o "ProxyCommand=$(q "$B/bin/tailscale") --socket=$(q "$B/run/tailscaled.sock") nc %h %p")
+# The first stdin line is the auth header; POST body follows unchanged.
+AUTH_HEADER=$(python3 "$D/_bridge_auth.py") || die 2 "token unavailable"
 
 LOCAL_MAX=$((MAXT + 30))
-timeout "$LOCAL_MAX" "${SSH[@]}" "$RELAY" "$REMOTE"
+{ printf '%s\n' "$AUTH_HEADER"; [ "$M" != POST ] || cat; } | timeout "$LOCAL_MAX" "${SSH[@]}" -- "$RELAY" "$REMOTE"
 rc=$?
 case $rc in
   0)   exit 0 ;;

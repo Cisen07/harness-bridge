@@ -9,7 +9,7 @@ SSHes in per job and runs the native CLI. (The repository does not maintain a Li
 2. An account for the agent (a dedicated one is recommended) with Codex and/or Claude Code installed and logged in,
    and `zsh` available (jobs run in `zsh -lic` so the login environment is loaded).
 3. Codex permissions come from that account's `~/.codex/config.toml` (e.g. `sandbox_mode`, `approval_policy`).
-4. Add the dispatcher's **dedicated** public key to `~/.ssh/authorized_keys`, ideally with `from="<dispatcher-tailnet-ip>"`
+4. Add the dispatcher's **dedicated** public key to `~/.ssh/authorized_keys`, with `restrict,from="<dispatcher-ip>"`
    and without agent/X11/port forwarding (`no-agent-forwarding,no-port-forwarding,no-X11-forwarding`).
 
 ## On the dispatcher box
@@ -36,3 +36,6 @@ Without `wake`, wait with `dispatcher/bin/job_wait.sh <job_id>`. Copy files with
 If the host selects Claude models through a helper script, set `switch_helper` in the target. The helper must print
 shell `export` lines for the given model on `<helper> export <model>` and exit non-zero (listing candidates on
 stderr) for unknown models. The selection applies to that one process only.
+
+Use `restrict,from="<dispatcher-ip>" ssh-ed25519 <public-key>` for the dedicated key.
+Keep OpenSSH updated and expose sshd only to the tailnet.

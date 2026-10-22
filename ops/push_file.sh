@@ -18,6 +18,7 @@ if not isinstance(t, dict):
 print(t['host'], t['user'], t['ssh_key'])
 PY
 )
+[[ "$host" =~ ^[A-Za-z0-9._-]+$ && "$user" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "invalid SSH user or host" >&2; exit 2; }
 key=$(harness_path "$key")
 # POSIX single-quote escaping for the remote shell
 q() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
@@ -27,8 +28,8 @@ SSH=(ssh -T -i "$key"
   -o ServerAliveInterval=30 -o ServerAliveCountMax=3
   -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$HARNESS_HOME/ssh/known_hosts")
 [ "${HARNESS_SSH_PROXY:-tailscale-nc}" = tailscale-nc ] && \
-  SSH+=(-o "ProxyCommand=$HARNESS_HOME/bin/tailscale --socket=$HARNESS_HOME/run/tailscaled.sock nc %h %p")
-SSH+=("$user@$host")
+  SSH+=(-o "ProxyCommand=$(q "$HARNESS_HOME/bin/tailscale") --socket=$(q "$HARNESS_HOME/run/tailscaled.sock") nc %h %p")
+SSH+=(-- "$user@$host")
 local_sha=$(sha256sum -- "$src" | cut -d' ' -f1)
 "${SSH[@]}" "mkdir -p -- $rdir && cat > $rtmp && mv -f -- $rtmp $rdst" < "$src"
 remote_sha=$("${SSH[@]}" "sha256sum -- $rdst" | cut -d' ' -f1)

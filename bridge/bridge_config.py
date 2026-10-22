@@ -28,6 +28,9 @@ DEFAULTS = {
         'port': 18542,
         'host_label': 'mac',           # sent as "host" in the terminal webhook payload
         'max_workers': 4,
+        'require_token': True,
+        'token_file': '',
+        'webhook_url_prefix': '',
         'job_timeout_seconds': 3600,
         'max_body_bytes': 16000,
         'tailscale_bin': '/usr/local/bin/tailscale',
@@ -97,6 +100,9 @@ def load():
     server = cfg['server']
     server['journal'] = server['journal'] or str(BRIDGE_DIR / 'jobs.json')
     server['webhook_conf'] = server['webhook_conf'] or str(BRIDGE_DIR / 'webhook.conf')
+    server['token_file'] = server['token_file'] or str(BRIDGE_DIR / 'bridge.token')
+    if not isinstance(server['require_token'], bool):
+        raise ValueError('server.require_token must be boolean')
     codex = cfg['codex']
     codex['home'] = codex['home'] or os.environ.get('CODEX_HOME', str(HOME / '.codex'))
     rules = {}

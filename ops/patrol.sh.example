@@ -7,12 +7,14 @@ D="$(cd "$(dirname "$0")/../dispatcher/bin" 2>/dev/null && pwd)"; . "${D:-$HARNE
 P=$HARNESS_HOME/patrol; mkdir -p "$P"; cur=$P/current.txt; base=$P/baseline.txt
 CHECK_TARGETS="${CHECK_TARGETS:-ubuntu-a-codex}"     # backends from targets.json (one per host is enough)
 TS="$HARNESS_HOME/bin/tailscale --socket=$HARNESS_HOME/run/tailscaled.sock"
+q() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
 ssh_to() {
   read -r h u k < <(python3 -c 'import json,sys;t=json.load(open(sys.argv[1]))[sys.argv[2]];print(t["host"],t["user"],t["ssh_key"])' \
     "${HARNESS_TARGETS:-$HARNESS_HOME/targets.json}" "$1")
+  [[ "$h" =~ ^[A-Za-z0-9._-]+$ && "$u" =~ ^[A-Za-z0-9._-]+$ ]] || return 2
   ssh -T -i "$(harness_path "$k")" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 \
     -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$HARNESS_HOME/ssh/known_hosts" \
-    -o "ProxyCommand=$TS nc %h %p" "$u@$h" "$2"; }
+    -o "ProxyCommand=$(q "$HARNESS_HOME/bin/tailscale") --socket=$(q "$HARNESS_HOME/run/tailscaled.sock") nc %h %p" -- "$u@$h" "$2"; }
 {
   for f in "$HARNESS_HOME"/ssh/*; do echo "box:$(basename "$f") $(sha256sum < "$f" | cut -c1-16)"; done
   echo "box:tailnet-peers $($TS status 2>/dev/null | awk '/^[0-9]/{print $1,$2}' | sort | sha256sum | cut -c1-16)"

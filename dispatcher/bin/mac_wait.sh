@@ -19,6 +19,7 @@ for pair in ${MAC_HOSTS:-}; do [ "${pair%%=*}" = "$H" ] && HP="${pair#*=}"; done
 if [ -z "$HP" ]; then case "$H" in *:*) HP="$H";; *) echo "host must be an alias from MAC_HOSTS or host:port" >&2; exit 64;; esac; fi
 [[ "$J" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || { echo "bad job_id" >&2; exit 64; }
 [ -n "$O" ] || { echo "missing outfile" >&2; exit 64; }
+AUTH_HEADER=$(python3 "$D/_bridge_auth.py") || exit 1
 T=$(mktemp "$O.tmp.XXXXXXXX") || exit 1
 chmod 600 "$T" || exit 1
 trap 'rm -f "$T"' EXIT
@@ -26,7 +27,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 t0=$(date +%s); fails=0; S=""
 while :; do
-  code=$(curl -sS --proxy "socks5h://$HARNESS_SOCKS_ADDR" --noproxy '' --connect-timeout 10 --max-time 20 \
+  code=$(curl -H @/dev/fd/3 3<<<"$AUTH_HEADER" -sS --proxy "socks5h://$HARNESS_SOCKS_ADDR" --noproxy '' --connect-timeout 10 --max-time 20 \
          -o "$T" -w '%{http_code}' "http://$HP/jobs/$J" 2>/dev/null)
   if [ "$code" = 200 ]; then
     fails=0

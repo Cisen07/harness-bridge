@@ -42,10 +42,7 @@ def main():
         print('permission_denials: %d' % len(ds))
         for d in ds[:5]:
             if isinstance(d, dict):
-                cmd = json.dumps(d.get('tool_input', ''), ensure_ascii=False)
-                print('  -', d.get('tool_name'), cmd[:120] + ('…' if len(cmd) > 120 else ''))
-            else:
-                print('  -', str(d)[:120])
+                print('  -', d.get('tool_name'))
     if st == 'failed' and j.get('exit_code') == 0 and not j.get('error'):
         print('note: exit_code=0 but status failed: usually an error/turn.failed event in the CLI output; the result may still be complete')
     if j.get('error'):

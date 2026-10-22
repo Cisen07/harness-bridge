@@ -9,6 +9,8 @@ All host-specific values come from config.toml (see config.example.toml).
 """
 import concurrent.futures
 import datetime
+import hmac
+import stat
 import http.server
 import ipaddress
 import json
@@ -19,6 +21,7 @@ import subprocess
 import threading
 import uuid
 import urllib.request
+from urllib.parse import urlsplit
 from agent_adapters import (BACKENDS, CLAUDE_ENV_MISSING, EFFORTS, ModelError, codex_config_default,
                             codex_effective, codex_models, command_for, normalize_selection, parse_events)
 from bridge_config import CONFIG
@@ -63,6 +66,51 @@ class NoWebhookRedirect(urllib.request.HTTPRedirectHandler):
         return None  # Never forward Authorization to a redirect destination.
 
 
+def validate_webhook_url(url):
+    def endpoint(value):
+        parsed = urlsplit(value)
+        if (not parsed.hostname or parsed.username is not None or parsed.password is not None
+                or parsed.fragment or parsed.query or '%' in value or '\\' in value
+                or any(c.isspace() or ord(c) < 32 for c in value)
+                or any('..' in segment or ';' in segment for segment in parsed.path.split('/'))):
+            raise ValueError('Invalid webhook URL')
+        if parsed.scheme == 'http':
+            address = ipaddress.ip_address(parsed.hostname)  # no DNS names for plaintext
+            if not (address.is_loopback or address in ipaddress.ip_network('100.64.0.0/10')):
+                raise ValueError('Plaintext webhook outside trusted network')
+        elif parsed.scheme != 'https':
+            raise ValueError('Invalid webhook scheme')
+        return parsed, (parsed.scheme, parsed.hostname.lower(),
+                        parsed.port if parsed.port is not None else (443 if parsed.scheme == 'https' else 80))
+    target, origin = endpoint(url)
+    prefix = _SERVER.get('webhook_url_prefix', '')
+    if prefix:
+        allowed, allowed_origin = endpoint(prefix)
+        base = allowed.path.rstrip('/')
+        if origin != allowed_origin or (base and target.path != base and not target.path.startswith(base + '/')):
+            raise ValueError('Webhook outside configured origin/path')
+
+
+def bearer_authorized(headers):
+    if not _SERVER.get('require_token', True):
+        return True
+    try:
+        path = os.environ.get('HARNESS_BRIDGE_TOKEN_FILE') or _SERVER['token_file']
+        # Validate the opened file, avoiding a stat/read race and refusing symlinks.
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, 'rb') as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600 or info.st_uid != os.geteuid():
+                return False
+            token = stream.read(4097).strip()
+        if not token or len(token) > 4096 or any(c < 33 or c > 126 for c in token):
+            return False
+        supplied = headers.get_all('Authorization', [])
+        return len(supplied) == 1 and hmac.compare_digest(supplied[0].encode('utf-8'), b'Bearer ' + token)
+    except (OSError, ValueError, KeyError, UnicodeError):
+        return False
+
+
 def post_terminal_webhook(payload):
     """Best effort only. Never log config, URLs, headers, or exception messages."""
     try:
@@ -84,6 +132,7 @@ def post_terminal_webhook(payload):
         auth = values.get('WEBHOOK_AUTH', '')
         if not url or not auth:
             return
+        validate_webhook_url(url)
         request = urllib.request.Request(
             url, data=json.dumps(payload).encode('utf-8'), method='POST',
             headers={'Authorization': auth, 'Content-Type': 'application/json'})
@@ -235,6 +284,8 @@ def resolve_session_selection(session, backend, model, effort):
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
+    timeout = 30
+
     def log_message(self, *_):
         pass  # Do not log prompts, credentials, or request headers.
 
@@ -248,8 +299,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        if not authorized(self.client_address[0]):
-            return self.reply(403, {'error': 'Requires an allowed Tailscale source (see access.allowed_sources)'})
+        if not authorized(self.client_address[0]) or not bearer_authorized(self.headers):
+            return self.reply(403, {'error': 'Requires an allowed Tailscale source and valid API credential'})
         if self.path == '/health':
             return self.reply(200, {'ok': True, 'backend': 'Mac Codex / Claude Code CLI',
                                     'backends': list(BACKENDS),
@@ -277,10 +328,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return self.reply(404, {'error': 'Unknown route'})
 
     def do_POST(self):
-        if not authorized(self.client_address[0]):
-            return self.reply(403, {'error': 'Requires an allowed Tailscale source (see access.allowed_sources)'})
+        if not authorized(self.client_address[0]) or not bearer_authorized(self.headers):
+            return self.reply(403, {'error': 'Requires an allowed Tailscale source and valid API credential'})
         if self.path != '/jobs':
             return self.reply(404, {'error': 'Unknown route'})
+        if ('Origin' in self.headers or 'Sec-Fetch-Site' in self.headers
+                or self.headers.get_all('Host', []) != [f'{HOST}:{PORT}']):
+            return self.reply(403, {'error': 'Invalid request origin or host'})
+        if (len(self.headers.get_all('Content-Type', [])) != 1
+                or self.headers.get_content_type() != 'application/json'):
+            return self.reply(415, {'error': 'Requires application/json'})
         try:
             length = int(self.headers.get('Content-Length', '0'))
             if not 0 < length <= MAX_BODY:

@@ -22,7 +22,7 @@ import subprocess
 import sys
 import time
 import urllib.request
-from urllib.parse import urlparse
+from urllib.parse import urlsplit as urlparse
 import uuid
 
 BASE = pathlib.Path(os.environ.get('HARNESS_HOME') or os.path.expanduser('~/harness'))
@@ -89,14 +89,16 @@ def codex_flags(model=None, effort=None):
 
 def ssh_args(backend, remote):
     host, user, cwd, entry, engine, key, switch = TARGETS[backend]
+    if any(not isinstance(v, str) or not re.fullmatch(r'[A-Za-z0-9._-]+', v) for v in (host, user)):
+        raise ValueError('Invalid SSH host or user')
     args = ['ssh', '-T', '-i', key,
             '-o', 'IdentitiesOnly=yes', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15',
             '-o', 'ServerAliveInterval=30', '-o', 'ServerAliveCountMax=3',
             '-o', 'StrictHostKeyChecking=yes', '-o', 'UserKnownHostsFile=' + str(BASE / 'ssh/known_hosts')]
     if SSH_PROXY == 'tailscale-nc':
-        proxy = str(BASE / 'bin/tailscale') + ' --socket=' + str(BASE / 'run/tailscaled.sock') + ' nc %h %p'
+        proxy = shlex.quote(str(BASE / 'bin/tailscale')) + ' --socket=' + shlex.quote(str(BASE / 'run/tailscaled.sock')) + ' nc %h %p'
         args += ['-o', 'ProxyCommand=' + proxy]
-    return args + [user + '@' + host, remote]
+    return args + ['--', user + '@' + host, remote]
 
 
 def command(backend, session=None, model=None, effort=None):
@@ -307,6 +309,7 @@ def validate_wake(wake):
         parsed = urlparse(value)
         if (parsed.scheme != 'https' or not parsed.hostname or parsed.username is not None
                 or parsed.password is not None or parsed.fragment or parsed.query
+                or any('..' in part or '%' in part or ';' in part for part in parsed.path.split('/'))
                 or '%' in parsed.netloc or '\\' in value):
             raise ValueError('wake URL must be HTTPS without userinfo, query or fragment')
         return parsed, (parsed.scheme, parsed.hostname.lower(), parsed.port if parsed.port is not None else 443)
