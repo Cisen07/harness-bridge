@@ -1,0 +1,12 @@
+# webhook.conf — terminal-state push for harness-bridge.
+# Copy to webhook.conf (next to codex_bridge.py, or the path in config.toml), then: chmod 600 webhook.conf
+# Only these two keys are accepted; any other key disables the webhook (logged as "Invalid webhook config").
+#
+# WEBHOOK_AUTH is sent VERBATIM as the Authorization header value.
+#   It MUST be exactly:  Bearer <your_key>
+#   WRONG: WEBHOOK_AUTH=Authorization: Bearer <key>   -> header "Authorization: Authorization: Bearer ..." -> 401
+#   WRONG: WEBHOOK_AUTH=<key>                         -> missing "Bearer " -> 401 on Bearer-auth endpoints
+#
+# Leaving either value empty (or deleting this file) disables the push; the bridge keeps working.
+WEBHOOK_URL=<your_endpoint>
+WEBHOOK_AUTH=Bearer <your_key>

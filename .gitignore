@@ -1,0 +1,57 @@
+# Real configuration (only *.example / *.template are tracked)
+*.conf
+!*.conf.example
+config.toml
+config.json
+hosts.env
+targets.json
+*.env
+!*.example.env
+.scrub-denylist.local
+
+# Keys, tokens, credentials
+ssh/
+*.pem
+*.key
+id_ed25519*
+id_rsa*
+known_hosts
+*token*
+!scripts/*token*
+headers.txt
+device-code*
+
+# Tailscale state, sockets, binaries
+state/
+state.bak-*/
+run/
+bin/tailscale
+bin/tailscaled
+*.tgz
+
+# Job records, journals, logs (contain prompts and results)
+jobs.json
+jobs.json.*
+direct-jobs/
+sessions/
+*.log
+harness-ledger.jsonl
+watchdog/
+patrol/current.txt
+patrol/baseline.txt
+
+# Backups and patch leftovers
+*.bak*
+*.orig
+*.rej
+*.diff
+*.patch
+*.b64
+*.tmp
+*.part.*
+
+# Python / OS
+__pycache__/
+*.pyc
+.DS_Store
+SCRUB-REPORT.md

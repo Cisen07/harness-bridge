@@ -1,0 +1,39 @@
+# harness-bridge configuration (copy to config.toml next to codex_bridge.py, chmod 600).
+# Every value here is an example placeholder. Nothing in this file is a secret, but it does
+# describe your network; do NOT commit your real config.toml (it is in .gitignore).
+
+[server]
+bind_host   = "100.x.y.z"        # this Mac's tailnet IP (`tailscale ip -4`). Never 0.0.0.0.
+port        = 18542              # default; any free port works, keep ACL + dispatcher in sync
+host_label  = "mac-a"            # short label sent as "host" in the webhook payload
+max_workers = 4                  # concurrent jobs shared by both backends
+job_timeout_seconds = 3600
+max_body_bytes = 16000
+tailscale_bin = "/usr/local/bin/tailscale"   # or /Applications/Tailscale.app/Contents/MacOS/Tailscale
+# journal      = "/path/to/jobs.json"        # default: <bridge dir>/jobs.json
+# webhook_conf = "/path/to/webhook.conf"     # default: <bridge dir>/webhook.conf
+
+[workspace]
+path = "/Users/<you>/src"        # fixed working directory for both engines
+
+[codex]
+bin = "/Users/<you>/.local/bin/codex"
+# home = "/Users/<you>/.codex"   # default: $CODEX_HOME or ~/.codex
+sandbox = "danger-full-access"
+approval_policy = "never"
+
+[claude]
+bin = "claude"                   # or an absolute path
+shell = "/bin/zsh"
+path_prepend = ["/Users/<you>/.local/bin", "/opt/homebrew/bin"]
+# env_script = "/Users/<you>/.config/<gateway>/active.zsh"  # optional; sourced before claude
+permission_mode = "dontAsk"
+model_mode = "flag"              # "flag" = claude --model <m>; "switch" = use switch_helper
+# switch_helper = "/Users/<you>/tools/model-switch/run.sh"  # must support: <helper> export <model>
+
+[access]
+# Callers allowed to use the API. The source IP must be listed AND `tailscale whois` must confirm it.
+allowed_sources = [
+  { ip = "100.x.y.1", tag  = "tag:<dispatcher-tag>" },        # the dispatcher box (tagged node)
+  { ip = "100.x.y.2", node = "<peer-node>.<tailnet>.ts.net" }, # optional: another trusted machine
+]

@@ -1,0 +1,28 @@
+{
+  "_comment": "SSH-mode targets for direct_ssh_client.py. Copy to $HARNESS_HOME/targets.json (chmod 600). Keys starting with _ are ignored. Backend names: lowercase letters, digits, dashes. ssh_key is relative to $HARNESS_HOME or absolute. switch_helper is optional (claude only): a script supporting `<helper> export <model>` that prints shell exports for that model.",
+  "ubuntu-a-codex": {
+    "host": "100.x.y.3",
+    "user": "<remote-user>",
+    "workspace": "/home/<remote-user>/src",
+    "entry": "/home/<remote-user>/.local/bin/codex",
+    "engine": "codex",
+    "ssh_key": "ssh/id_ed25519_ubuntu-a"
+  },
+  "ubuntu-a-claudecode": {
+    "host": "100.x.y.3",
+    "user": "<remote-user>",
+    "workspace": "/home/<remote-user>/src",
+    "entry": "/home/<remote-user>/.local/bin/claude",
+    "engine": "claude",
+    "ssh_key": "ssh/id_ed25519_ubuntu-a",
+    "switch_helper": "/home/<remote-user>/tools/model-switch/run.sh"
+  },
+  "ubuntu-b-codex": {
+    "host": "100.x.y.4",
+    "user": "<remote-user>",
+    "workspace": "/home/<remote-user>/workspace",
+    "entry": "/usr/local/bin/codex",
+    "engine": "codex",
+    "ssh_key": "ssh/id_ed25519_ubuntu-b"
+  }
+}

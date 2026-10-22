@@ -1,0 +1,29 @@
+# systemd --user unit template for harness-bridge on Linux.
+#
+# NOT the supported Ubuntu path. Ubuntu hosts are driven in SSH mode
+# (dispatcher/direct_ssh_client.py, see docs/install-ubuntu.md); no Linux-specific bridge is maintained.
+# This template exists only for people who want to experiment with the HTTP bridge on Linux.
+#
+# Install: replace {{PLACEHOLDERS}}, save as ~/.config/systemd/user/harness-bridge.service, then
+#   systemctl --user daemon-reload && systemctl --user enable --now harness-bridge
+#   loginctl enable-linger "$USER"   # keep it running without an open session
+# In config.toml set claude.shell = "/bin/bash" if zsh is not installed, and tailscale_bin = "/usr/bin/tailscale".
+[Unit]
+Description=harness-bridge (agent CLI job API over Tailscale)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=HARNESS_BRIDGE_CONFIG={{BRIDGE_DIR}}/config.toml
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PATH={{HOME}}/.local/bin:/usr/local/bin:/usr/bin:/bin
+WorkingDirectory={{WORKSPACE}}
+ExecStart=/usr/bin/python3 -B -u {{BRIDGE_DIR}}/codex_bridge.py
+Restart=always
+RestartSec=10
+UMask=0077
+TimeoutStopSec=20
+
+[Install]
+WantedBy=default.target

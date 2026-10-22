@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# patrol.sh.example — optional daily fingerprint check of the access paths around the dispatcher box.
+# Prints "OK" when nothing changed, otherwise "CHANGED" plus the item names. Never prints key material.
+# Copy to $HARNESS_HOME/patrol/patrol.sh, adjust CHECK_TARGETS, run once with --rebaseline, then daily.
+set -uo pipefail
+D="$(cd "$(dirname "$0")/../dispatcher/bin" 2>/dev/null && pwd)"; . "${D:-$HARNESS_HOME/bin}/_env.sh"
+P=$HARNESS_HOME/patrol; mkdir -p "$P"; cur=$P/current.txt; base=$P/baseline.txt
+CHECK_TARGETS="${CHECK_TARGETS:-ubuntu-a-codex}"     # backends from targets.json (one per host is enough)
+TS="$HARNESS_HOME/bin/tailscale --socket=$HARNESS_HOME/run/tailscaled.sock"
+ssh_to() {
+  read -r h u k < <(python3 -c 'import json,sys;t=json.load(open(sys.argv[1]))[sys.argv[2]];print(t["host"],t["user"],t["ssh_key"])' \
+    "${HARNESS_TARGETS:-$HARNESS_HOME/targets.json}" "$1")
+  ssh -T -i "$(harness_path "$k")" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 \
+    -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$HARNESS_HOME/ssh/known_hosts" \
+    -o "ProxyCommand=$TS nc %h %p" "$u@$h" "$2"; }
+{
+  for f in "$HARNESS_HOME"/ssh/*; do echo "box:$(basename "$f") $(sha256sum < "$f" | cut -c1-16)"; done
+  echo "box:tailnet-peers $($TS status 2>/dev/null | awk '/^[0-9]/{print $1,$2}' | sort | sha256sum | cut -c1-16)"
+  for t in $CHECK_TARGETS; do
+    echo "$t:authorized_keys $(ssh_to "$t" 'sha256sum < ~/.ssh/authorized_keys' 2>/dev/null | cut -c1-16 || echo ERR)"
+    echo "$t:sshd_config $(ssh_to "$t" 'cat /etc/ssh/sshd_config /etc/ssh/sshd_config.d/* 2>/dev/null | sha256sum' 2>/dev/null | cut -c1-16 || echo ERR)"
+  done
+  for f in "$D"/../relay/*.sh "$D"/../tailscale/*.sh; do
+    [ -f "$f" ] && echo "box:$(basename "$f") $(sha256sum < "$f" | cut -c1-16) $(stat -c %a "$f")"; done
+  if pgrep -f "tailscaled_watchdog.sh loop" >/dev/null; then echo "box:watchdog-running yes"; else echo "box:watchdog-running no"; fi
+} > "$cur"
+if [ ! -f "$base" ] || [ "${1:-}" = "--rebaseline" ]; then cp "$cur" "$base"; echo "BASELINE"; cat "$base"; exit 0; fi
+if diff -q "$base" "$cur" >/dev/null; then echo OK; else echo CHANGED; diff "$base" "$cur" | awk '/^[<>]/{print $1,$2}' | sort -u; fi

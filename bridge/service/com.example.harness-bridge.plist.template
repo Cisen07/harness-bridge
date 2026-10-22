@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd LaunchAgent template for harness-bridge (macOS).
+  Replace every {{PLACEHOLDER}}, save as ~/Library/LaunchAgents/{{LABEL}}.plist, then:
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/{{LABEL}}.plist
+  Restart later with: launchctl kickstart -k gui/$(id -u)/{{LABEL}}   (never `launchctl submit`)
+  {{LABEL}}        reverse-DNS label you own, e.g. com.example.harness-bridge
+  {{HOME}}         your home directory, e.g. /Users/<you>
+  {{BRIDGE_DIR}}   directory holding codex_bridge.py, config.toml, webhook.conf
+  {{PYTHON}}       python3 >= 3.11 (or 3.8+ with config.json); a dedicated copy/symlink makes the
+                   process easy to identify in Activity Monitor and in the macOS privacy prompts
+  {{WORKSPACE}}    same as [workspace].path in config.toml
+  Proxy variables are optional: only add them if the CLIs need an outbound HTTP proxy, and keep the
+  tailnet range (100.64.0.0/10) in NO_PROXY so the webhook and whois calls are not proxied by mistake.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>{{LABEL}}</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>{{PYTHON}}</string>
+		<string>-B</string>
+		<string>-u</string>
+		<string>{{BRIDGE_DIR}}/codex_bridge.py</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>{{HOME}}</string>
+		<key>CODEX_HOME</key>
+		<string>{{HOME}}/.codex</string>
+		<key>PATH</key>
+		<string>{{HOME}}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<key>PYTHONDONTWRITEBYTECODE</key>
+		<string>1</string>
+		<key>HARNESS_BRIDGE_CONFIG</key>
+		<string>{{BRIDGE_DIR}}/config.toml</string>
+		<!-- Optional outbound proxy for the CLIs:
+		<key>HTTPS_PROXY</key><string>http://127.0.0.1:{{PROXY_PORT}}</string>
+		<key>NO_PROXY</key><string>127.0.0.1,localhost,::1,100.64.0.0/10,*.local</string>
+		-->
+	</dict>
+	<key>WorkingDirectory</key>
+	<string>{{WORKSPACE}}</string>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+	<key>ExitTimeOut</key>
+	<integer>20</integer>
+	<key>Umask</key>
+	<integer>63</integer>
+	<key>StandardOutPath</key>
+	<string>{{BRIDGE_DIR}}/launchd.stdout.log</string>
+	<key>StandardErrorPath</key>
+	<string>{{BRIDGE_DIR}}/launchd.stderr.log</string>
+</dict>
+</plist>

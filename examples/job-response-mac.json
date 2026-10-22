@@ -1,0 +1,15 @@
+{
+  "job_id": "11111111-2222-4333-8444-555555555555",
+  "status": "completed",
+  "backend": "mac-codex",
+  "session_id": "22222222-3333-4444-8555-666666666666",
+  "workspace": "/Users/<you>/src",
+  "created_at": "2026-01-01T00:00:00+00:00",
+  "model": "gpt-6.1-sol",
+  "effort": "medium",
+  "model_source": "request",
+  "effective_model": "gpt-6.1-sol",
+  "effective_effort": "medium",
+  "exit_code": 0,
+  "result": "All 42 tests pass. Report: reports/test-run.md"
+}

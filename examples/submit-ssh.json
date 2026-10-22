@@ -1,0 +1,6 @@
+{
+  "backend": "ubuntu-a-claudecode",
+  "model": "claude-sonnet-5-5",
+  "prompt": "Check disk usage under the workspace and report the 5 largest directories. Your final reply must be at most 15 lines.",
+  "wake": {"url": "<your_endpoint>", "key_env": "HARNESS_WAKE_KEY"}
+}
