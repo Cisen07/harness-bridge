@@ -40,3 +40,90 @@ shared backups and archives. Review daily; remove backups older than 7 days only
 after verifying the current daemon/state is healthy, retaining the newest known
 good backup until then. Never remove live `state/`. Cleanup is an operator task;
 these retention periods are recommendations, not an installed automatic job.
+
+## Token channel B (offline encrypted return)
+
+Use a new one-shot RSA-3072 keypair for each transfer. On the box, create a private
+0700 directory, then run:
+
+```bash
+ops/token-provision/gen_keypair.sh /private/key-dir > public.pem
+```
+
+Transfer only `public.pem` to the Mac using the approved channel. On the Mac:
+
+```bash
+ops/token-provision/make_token_and_encrypt.sh public.pem /private/source-current.token > envelope.txt
+```
+
+The token is generated with Python `secrets.token_urlsafe(32)`, written exclusively
+(O_EXCL, 0600); plaintext never enters argv, environment, stdout or stderr.
+The first envelope line is `OAEP-SHA256`; LibreSSL installations lacking the digest
+option fall back to `OAEP-SHA1` (OAEP default compatibility). The second line is
+base64 ciphertext. Transfer this envelope back to the box; there run:
+
+```bash
+ops/token-provision/decrypt_store.sh /private/key-dir/private.pem /private/bridge.token --wipe-key < envelope.txt
+```
+
+Decryption honors the envelope's explicit OAEP digest and creates the destination
+exclusively with 0600 permissions. Existing files are never overwritten. Errors
+are generic; if encryption fails after creation, the Mac token file remains for
+operator inspection/removal before retry. Keep all paths in private directories.
+`--wipe-key` overwrites, fsyncs, then deletes the one-shot private key only after
+successful storage; alternatively use `shred -u` where available, or overwrite and
+unlink. APFS/SSD snapshots and copy-on-write prevent guaranteed physical erasure;
+exclude the one-shot directory from backups and use encrypted storage. Never send
+the private key or plaintext token back through the conversation/job output.
+
+## Cutover script usage
+
+`ops/macos/cutover.py` uses Python 3, avoiding Bash 3.2 incompatibilities. Prepare
+and inspect both new and snapshot plists (matching Label) in private immutable
+release directories; old plist must point to the previous code/config, new plist
+to the staged release. This script restores the plist, not overwritten source files.
+Ensure no other work is running and the snapshot is known good. Example:
+
+```bash
+python3 -B ops/macos/cutover.py --label com.example.bridge \
+  --plist-new /private/release/new.plist --plist-snapshot /private/release/old.plist \
+  --bind <mac-tailnet-ip>:18542 --state-file /private/release/cutover.json \
+  --self-check-url http://<mac-tailnet-ip>:18542/health --delay 5 --dry-run
+```
+
+No execution occurs by default. Replace `--dry-run` with `--execute` for the actual
+cutover. It double-forks and calls setsid before sleeping, so a job can restart its
+own bridge. It uses `launchctl bootout`, atomic copy/rename into
+`~/Library/LaunchAgents/<label>.plist`, then `launchctl bootstrap`. In the health
+window (60 seconds), lsof must show exactly the expected address/port and one PID,
+with two observations at least 30 seconds apart. Optional self-check uses no token,
+no proxy, no redirects, and expects 403 (proves the authenticated listener answers).
+Any switch/check failure triggers snapshot restore/bootstrap and one further health
+window. Poll the JSON state file (0600, atomic writes): `complete`, `rolled_back`,
+or `rollback_failed` is terminal; intermediate stages are `delay`, `cutover`, `rollback`.
+Only check booleans, phases and timestamps are written; subprocess output is suppressed.
+Do not race multiple cutovers, change snapshots during execution, or put secrets in
+URL/path/label arguments. This tool is not run automatically during installation.
+
+## Source-bound tokens and rotation
+
+```toml
+[access]
+allowed_sources = [
+  { ip = "<box-tailnet-ip>", node = "box.example.ts.net", token_files = ["/private/box-current", "/private/box-next"] },
+  { ip = "<peer-tailnet-ip>", tag = "tag:dispatcher", token_files = ["/private/peer-current"] },
+]
+```
+
+Each source must pass IP + whois identity + its own Bearer slots. One or two paths
+are accepted, each re-read with the same owned-regular-file/no-symlink/0600/content
+rules; all slots are compared without stopping on a match. Omitted `token_files`
+uses the global `server.token_file` (including its legacy environment override).
+Startup requires current; a missing next is normal, but an existing invalid next
+is a configuration error. Request failures always return the same 403. Publish a
+new next atomically, provision it on the caller using channel B, switch the caller,
+then atomically replace current and remove next. To revoke one source, remove its
+current file (requests fail closed even if next exists); other source tokens work.
+Before the next restart remove/reconfigure that revoked rule, since a missing
+current deliberately refuses startup. No production self-source or ACL changes
+are required for rotation.

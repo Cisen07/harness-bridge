@@ -60,3 +60,16 @@ MIT - see [LICENSE](LICENSE).
 Timeouts: the Mac bridge kills the CLI process group, including descendants that remain in that group.
 An SSH timeout does not guarantee remote processes have stopped; inspect the host before retrying.
 See [webhook and timeout behavior](docs/webhook-wake.md).
+
+Bearer tokens protect the API from other tailnet nodes and network callers.
+They do not protect against code running as the same local user and do not isolate
+jobs: such code can read that user's token files. Use OS accounts/sandboxing for
+local isolation. See [source tokens, channel B and cutover](docs/deploy-and-rollback.md).
+For manual calls (Bash, header supplied over an anonymous descriptor):
+
+```bash
+AUTH_HEADER=$(python3 "$HARNESS_HOME/bin/_bridge_auth.py")
+/usr/bin/curl -q -H @/dev/fd/3 --proxy socks5h://127.0.0.1:10555 --noproxy '' \
+  http://<mac-tailnet-ip>:18542/health 3< <(printf '%s\n' "$AUTH_HEADER")
+unset AUTH_HEADER
+```

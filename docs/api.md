@@ -1,7 +1,7 @@
 # Bridge HTTP API (macOS)
 
 Base URL: `http://<mac-tailnet-ip>:<port>` (default port 18542). From the dispatcher box:
-`curl --proxy socks5h://127.0.0.1:10555 --noproxy '' ...`. Every route requires an allowed source (else 403).
+`curl -q -H @/dev/fd/3 --proxy socks5h://127.0.0.1:10555 --noproxy '' ... 3< <(printf '%s\n' "$AUTH_HEADER")`. Every route requires an allowed source (else 403).
 
 ## GET /health
 `{"ok": true, "backend": "...", "backends": ["mac-codex","mac-claudecode"], "mode": {...}, "host": "<host_label>", "workspace": "..."}`
@@ -40,6 +40,11 @@ Response `202 {"job_id": "<uuid>", "status": "queued"}`. Errors: `400 {"error": 
 `max_workers` concurrent jobs (default 4) across both backends; `job_timeout_seconds` per job (default 3600; the
 Claude process group is killed on timeout).
 
-All routes also require a shared Bearer credential from an owned 0600 token file (SECURITY.md).
+All routes also require a source-bound Bearer credential (or the legacy global fallback) from an owned 0600 token file (SECURITY.md).
 POST /jobs requires Content-Type: application/json (415 otherwise), rejects any Origin or Sec-Fetch-Site
 header (403), and requires Host exactly equal to the configured bind_host:port (403).
+
+In Bash, set the non-exported header with
+`AUTH_HEADER=$(python3 "$HARNESS_HOME/bin/_bridge_auth.py")`, use the descriptor
+form above for every route, then `unset AUTH_HEADER`. Never put the token literal
+in curl argv or exported environment variables.

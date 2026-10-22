@@ -7,6 +7,7 @@ Resolution order for the config file:
 Nothing host-specific is hard-coded in the bridge; every value below has a neutral default
 or must be provided by the operator. See config.example.toml.
 """
+import ipaddress
 import json
 import os
 import pathlib
@@ -25,6 +26,7 @@ HOME = pathlib.Path(os.path.expanduser('~'))
 DEFAULTS = {
     'server': {
         'bind_host': '127.0.0.1',      # set to this machine's tailnet IP
+        'allow_loopback_for_tests': False,
         'port': 18542,
         'host_label': 'mac',           # sent as "host" in the terminal webhook payload
         'max_workers': 4,
@@ -103,6 +105,13 @@ def load():
     server['token_file'] = server['token_file'] or str(BRIDGE_DIR / 'bridge.token')
     if not isinstance(server['require_token'], bool):
         raise ValueError('server.require_token must be boolean')
+    host = ipaddress.ip_address(server['bind_host'])
+    allow_loopback = server.get('allow_loopback_for_tests', False)
+    if not isinstance(allow_loopback, bool):
+        raise ValueError('server.allow_loopback_for_tests must be boolean')
+    if not (host in ipaddress.ip_network('100.64.0.0/10') or
+            (str(host) == '127.0.0.1' and allow_loopback)):
+        raise ValueError('bind_host must be a tailnet IPv4 address (loopback requires test opt-in)')
     codex = cfg['codex']
     codex['home'] = codex['home'] or os.environ.get('CODEX_HOME', str(HOME / '.codex'))
     rules = {}
@@ -112,6 +121,14 @@ def load():
         rule = {k: entry[k] for k in ('tag', 'node') if entry.get(k)}
         if len(rule) != 1:
             raise ValueError('each allowed source needs exactly one of "tag" or "node"')
+        if 'token_files' in entry:
+            slots = entry['token_files']
+            if (not isinstance(slots, list) or not 1 <= len(slots) <= 2
+                    or any(not isinstance(p, str) or not p for p in slots)):
+                raise ValueError('token_files needs one or two nonempty paths')
+            rule['token_files'] = slots
+        if str(entry['ip']) in rules:
+            raise ValueError('duplicate source IP')
         rules[str(entry['ip'])] = rule
     cfg['access']['rules'] = rules
     return cfg

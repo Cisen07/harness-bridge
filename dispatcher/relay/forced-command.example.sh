@@ -1,7 +1,10 @@
-#!/usr/bin/env bash
+#!/usr/bin/bash
 # Install at an absolute private path; set the shebang to an absolute Bash >= 5.1.
 # Protocol: SSH command = "GET /health" (etc.); stdin = auth header + newline + body.
 # This is an alternative to relay_via_host.sh's inline remote-command protocol.
+unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY no_proxy NO_PROXY
+CURL=${CURL:-/usr/bin/curl}
+[[ $CURL = /* ]] || exit 2
 set -euo pipefail
 if (( BASH_VERSINFO[0] < 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] < 1) )); then
   echo 'relay requires Bash 5.1 or newer' >&2
@@ -18,8 +21,8 @@ else
 fi
 IFS= read -r auth
 [[ $auth = 'Authorization: Bearer '* && ${#auth} -le 4120 && $auth != *$'\r'* ]] || exit 2
-args=(-sS --connect-timeout 10 --max-time 60 -X "$method" -H @/dev/fd/3)
+args=(-q --noproxy '*' --proto '=http' -sS --connect-timeout 10 --max-time 60 -X "$method" -H @/dev/fd/3)
 [[ $method != POST ]] || args+=(-H 'Content-Type: application/json' --data-binary @-)
 # Process substitution supplies an anonymous pipe; no credential temp file or argv.
 # Keep the shell alive until curl finishes, so /dev/fd/3 remains available.
-curl "${args[@]}" -- "http://$TARGET$path" 3< <(printf '%s\n' "$auth")
+"$CURL" "${args[@]}" -- "http://$TARGET$path" 3< <(printf '%s\n' "$auth")

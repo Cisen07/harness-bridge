@@ -24,7 +24,7 @@ atexit.register(shutil.rmtree, TMP)
 (TMP / 'bridge.token').write_text('test-key\n')
 (TMP / 'bridge.token').chmod(0o600)
 CONF = {
-    'server': {'bind_host': '127.0.0.1', 'port': 0, 'host_label': 'mac-test',
+    'server': {'bind_host': '127.0.0.1', 'port': 0, 'allow_loopback_for_tests': True, 'host_label': 'mac-test',
                'journal': str(TMP / 'jobs.json'), 'webhook_conf': str(TMP / 'webhook.conf'),
                'token_file': str(TMP / 'bridge.token'), 'tailscale_bin': '/nonexistent/tailscale'},
     'workspace': {'path': str(TMP / 'ws')},

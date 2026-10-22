@@ -4,6 +4,7 @@
 
 [server]
 bind_host   = "100.x.y.z"        # this Mac's tailnet IP (`tailscale ip -4`). Never 0.0.0.0.
+# allow_loopback_for_tests = false # test-only opt-in for 127.0.0.1; never wildcard
 port        = 18542              # default; any free port works, keep ACL + dispatcher in sync
 host_label  = "mac-a"            # short label sent as "host" in the webhook payload
 require_token = true            # default; disabling removes application authentication
@@ -41,6 +42,6 @@ model_mode = "flag"              # "flag" = claude --model <m>; "switch" = use s
 [access]
 # Callers allowed to use the API. The source IP must be listed AND `tailscale whois` must confirm it.
 allowed_sources = [
-  { ip = "100.x.y.1", tag  = "tag:<dispatcher-tag>" },        # the dispatcher box (tagged node)
+  { ip = "100.x.y.1", tag  = "tag:<dispatcher-tag>", token_files = ["/private/box-current", "/private/box-next"] },        # the dispatcher box (tagged node)
   { ip = "100.x.y.2", node = "<peer-node>.<tailnet>.ts.net" }, # optional: another trusted machine
 ]

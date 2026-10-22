@@ -42,3 +42,21 @@ uses a different SSH command protocol from `relay_via_host.sh`: use the invocati
 above (or adapt the caller to emit `METHOD PATH`), rather than pairing it directly
 with the inline-command client. The forced command and target cannot be selected
 by the caller. Network ACLs must still restrict relay-to-bridge reachability.
+
+## Forced-command proxy regression (local manual test)
+
+The Linux relay wrapper uses `/usr/bin/bash` (Bash >=5.1), unsets all eight proxy
+variables before curl, and defaults `CURL=/usr/bin/curl` (override with an absolute
+path only). `-q` is the first curl argument, disabling curlrc; `--noproxy '*'` and
+`--proto '=http'` prevent proxy forwarding and other protocols. The authorization
+shell variable is not exported; fd 3 is an anonymous process-substitution pipe.
+
+For a local rehearsal, copy the wrapper into a temporary directory and change
+only TARGET to `127.0.0.1:<ephemeral backend port>`. Start a fake HTTP backend and
+a counting fake proxy, both on loopback ephemeral ports. Set http_proxy,
+https_proxy, all_proxy and their uppercase equivalents to that fake proxy,
+plus no_proxy/NO_PROXY to empty. Pipe `Authorization: Bearer fake-test` into the
+wrapper with `SSH_ORIGINAL_COMMAND='GET /health'`. Assert one backend request and
+**zero proxy requests**; repeat POST /jobs with a fake JSON body. Confirm invalid
+METHOD/PATH pairs are rejected without either listener receiving a request.
+Remove all temporary files/listeners afterward. Never use live credentials.

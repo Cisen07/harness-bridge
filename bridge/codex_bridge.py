@@ -91,15 +91,18 @@ def validate_webhook_url(url):
             raise ValueError('Webhook outside configured origin/path')
 
 
-def read_bearer_token():
+def read_bearer_token(path=None):
     """Read the owned 0600 credential without following symlinks or a stat/read race."""
-    path = os.environ.get('HARNESS_BRIDGE_TOKEN_FILE') or _SERVER['token_file']
+    path = path or os.environ.get('HARNESS_BRIDGE_TOKEN_FILE') or _SERVER['token_file']
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd, 'rb') as stream:
         info = os.fstat(stream.fileno())
         if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600 or info.st_uid != os.geteuid():
             raise ValueError('Token file must be an owned regular file with mode 0600')
-        token = stream.read(4097).strip()
+        raw = stream.read(4097)
+        if len(raw) > 4096:
+            raise ValueError('Token file too large')
+        token = raw.strip()
     if not token or len(token) > 4096 or any(c < 33 or c > 126 for c in token):
         raise ValueError('Invalid token file content')
     return token
@@ -108,7 +111,14 @@ def read_bearer_token():
 def validate_startup_token():
     if _SERVER.get('require_token', True):
         try:
-            read_bearer_token()
+            rules = list(ALLOWED_SOURCES.values()) or [{}]
+            for rule in rules:
+                for index, path in enumerate(rule.get('token_files', [None])):
+                    try:
+                        read_bearer_token(path)
+                    except FileNotFoundError:
+                        if index == 0:
+                            raise
         except (OSError, ValueError, KeyError):
             raise RuntimeError(
                 'Cannot start: Bearer token file must exist, be owned by this user, '
@@ -117,15 +127,29 @@ def validate_startup_token():
             ) from None
 
 
-def bearer_authorized(headers):
+def bearer_authorized(headers, address=None):
     if not _SERVER.get('require_token', True):
         return True
+    rule = ALLOWED_SOURCES.get(address, {})
+    supplied = headers.get_all('Authorization', [])
     try:
-        token = read_bearer_token()
-        supplied = headers.get_all('Authorization', [])
-        return len(supplied) == 1 and hmac.compare_digest(supplied[0].encode('utf-8'), b'Bearer ' + token)
-    except (OSError, ValueError, KeyError, UnicodeError):
-        return False
+        candidate = supplied[0].encode('utf-8') if len(supplied) == 1 else b''
+    except (UnicodeError, AttributeError):
+        candidate = b''
+    matched = False
+    invalid = False
+    for index, path in enumerate(rule.get('token_files', [None])):
+        token = b''
+        try:
+            token = read_bearer_token(path)
+        except FileNotFoundError:
+            invalid |= index == 0
+        except (OSError, ValueError, KeyError):
+            invalid = True
+        # Always compare every slot, including absent/invalid slots.
+        equal = hmac.compare_digest(candidate, b'Bearer ' + token)
+        matched |= equal and bool(token)
+    return matched and not invalid
 
 
 def post_terminal_webhook(payload):
@@ -316,7 +340,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        if not authorized(self.client_address[0]) or not bearer_authorized(self.headers):
+        if not authorized(self.client_address[0]) or not bearer_authorized(self.headers, self.client_address[0]):
             return self.reply(403, {'error': 'Requires an allowed Tailscale source and valid API credential'})
         if self.path == '/health':
             return self.reply(200, {'ok': True, 'backend': 'Mac Codex / Claude Code CLI',
@@ -345,7 +369,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return self.reply(404, {'error': 'Unknown route'})
 
     def do_POST(self):
-        if not authorized(self.client_address[0]) or not bearer_authorized(self.headers):
+        if not authorized(self.client_address[0]) or not bearer_authorized(self.headers, self.client_address[0]):
             return self.reply(403, {'error': 'Requires an allowed Tailscale source and valid API credential'})
         if self.path != '/jobs':
             return self.reply(404, {'error': 'Unknown route'})

@@ -56,3 +56,8 @@ __pycache__/
 *.pyc
 .DS_Store
 SCRUB-REPORT.md
+
+# Public provisioning tools; credentials remain ignored everywhere else.
+!/ops/token-provision/
+!/ops/token-provision/*.py
+!/ops/token-provision/*.sh

@@ -65,3 +65,9 @@ Keep OpenSSH updated and expose sshd only to the tailnet. Follow official Tailsc
 Relay hosts must use Bash 5.1+; zsh and older Bash may briefly write here-doc
 Authorization headers to disk. Prefer stdin and anonymous pipes; see the
 [restricted SSH wrapper example](docs/relay-security.md).
+
+Bearer tokens protect against other tailnet nodes and network callers. They do
+not defend against code running as the same local user: it can read credential
+files. Tokens do not isolate jobs. Use separate OS identities and sandboxing for
+local isolation. Per-source current/next slots and global-file fallback are
+documented in [deploy-and-rollback](docs/deploy-and-rollback.md#source-bound-tokens-and-rotation).

@@ -41,8 +41,8 @@ routine URL and `Bearer <key>` (see webhook-wake.md).
 
 ## 5. Verify from the dispatcher
 ```sh
-curl --proxy socks5h://127.0.0.1:10555 --noproxy '' http://<mac-ip>:18542/health
-curl ... -X POST -H 'Content-Type: application/json' -d '{"backend":"mac-codex","prompt":"reply OK"}' http://<mac-ip>:18542/jobs
+curl -H @/dev/fd/3 3< <(printf '%s\n' "$AUTH_HEADER") --proxy socks5h://127.0.0.1:10555 --noproxy '' http://<mac-ip>:18542/health
+curl -H @/dev/fd/3 3< <(printf '%s\n' "$AUTH_HEADER") ... -X POST -H 'Content-Type: application/json' -d '{"backend":"mac-codex","prompt":"reply OK"}' http://<mac-ip>:18542/jobs
 ```
 Then wait for the push and `GET /jobs/<id>`.
 
@@ -69,3 +69,30 @@ unset AUTH_HEADER
 Apply the same header to the earlier smoke-test commands. Do not add Origin or Sec-Fetch-Site headers;
 Host must be the configured bind_host:port. Keep `_bridge_auth.py` alongside installed dispatcher bin scripts.
 The userspace tailscaled default is 1.104.2; follow official Tailscale security bulletins and update it promptly.
+
+For the smoke curl commands above, first obtain a non-exported `AUTH_HEADER` using
+the header helper shown in Required API token, then unset it after use.
+
+## Preflight self-source (staging only)
+
+Create an independent staging config/release with port **18543** and a separate
+journal. Merge the following self entry with the staging caller rules:
+
+```toml
+[server]
+bind_host = "<本机tailnet IP>"
+port = 18543
+journal = "/private/stage/jobs.json"
+token_file = "/private/stage/bridge.token"
+
+[access]
+allowed_sources = [
+  { ip = "<本机tailnet IP>", node = "<本机node名>" },
+]
+```
+
+The placeholders must be replaced locally; provision only a staging token and
+keep staging files separate from production. Do not add this self-source to
+production. Do not modify ACLs for the rehearsal. Code rejects wildcard and
+non-tailnet bind addresses. `server.allow_loopback_for_tests = true` permits only
+127.0.0.1 for isolated tests; it is a test-only option, not a deployment setting.
