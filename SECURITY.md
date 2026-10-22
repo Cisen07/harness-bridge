@@ -1,8 +1,8 @@
 # Security model
 
 ## What this system is
-A way to give a remote bot the same power as typing into Codex / Claude Code on your machine. Agents typically run
-with `danger-full-access` / no approval prompts. **Anyone who can call the bridge, or who controls the dispatcher box,
+A way to give a remote bot the same power as typing into Codex / Claude Code on your machine. The example Codex configuration uses `workspace-write` with no approval prompts.
+Opting into `danger-full-access` removes filesystem sandboxing and permits access outside the workspace. **Anyone who can call the bridge, or who controls the dispatcher box,
 can run arbitrary commands as your user.** Treat the dispatcher box and its tailnet identity as highly privileged.
 
 ## Trust boundaries and controls
@@ -39,7 +39,7 @@ Placeholders must be replaced. Credentials never belong in logs, command argumen
 Bridge: `[server] token_file` (default `bridge.token` beside the bridge), overridden by
 `HARNESS_BRIDGE_TOKEN_FILE`. Dispatcher: exported `HARNESS_BRIDGE_TOKEN_FILE`, default
 `$HARNESS_HOME/bridge.token`. Missing, empty, oversized, symlinked, incorrectly owned or non-0600 files
-fail closed. The bridge rereads on each request to permit rotation and uses `hmac.compare_digest`.
+fail closed. Startup validates the token before listening and refuses invalid credentials. The bridge rereads on each request to permit rotation and uses `hmac.compare_digest`.
 Explicit legacy opt-out: bridge `[server] require_token = false`, dispatcher
 `HARNESS_BRIDGE_REQUIRE_TOKEN=0`; default is required on both sides. Direct SSH jobs do not call
 this HTTP API and continue to use their dedicated SSH key. Relay reads the dispatcher file and sends
@@ -60,3 +60,8 @@ relies on that network's confidentiality. Prefer HTTPS when possible.
 Use `restrict,from="<dispatcher-ip>" ssh-ed25519 <public-key>` in `authorized_keys`.
 Keep OpenSSH updated and expose sshd only to the tailnet. Follow official Tailscale security advisories
 ([security bulletins](https://tailscale.com/security-bulletins)); update the pinned default version promptly.
+
+## Relay shell requirement
+Relay hosts must use Bash 5.1+; zsh and older Bash may briefly write here-doc
+Authorization headers to disk. Prefer stdin and anonymous pipes; see the
+[restricted SSH wrapper example](docs/relay-security.md).

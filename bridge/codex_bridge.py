@@ -91,20 +91,37 @@ def validate_webhook_url(url):
             raise ValueError('Webhook outside configured origin/path')
 
 
+def read_bearer_token():
+    """Read the owned 0600 credential without following symlinks or a stat/read race."""
+    path = os.environ.get('HARNESS_BRIDGE_TOKEN_FILE') or _SERVER['token_file']
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, 'rb') as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600 or info.st_uid != os.geteuid():
+            raise ValueError('Token file must be an owned regular file with mode 0600')
+        token = stream.read(4097).strip()
+    if not token or len(token) > 4096 or any(c < 33 or c > 126 for c in token):
+        raise ValueError('Invalid token file content')
+    return token
+
+
+def validate_startup_token():
+    if _SERVER.get('require_token', True):
+        try:
+            read_bearer_token()
+        except (OSError, ValueError, KeyError):
+            raise RuntimeError(
+                'Cannot start: Bearer token file must exist, be owned by this user, '
+                'be a regular non-symlink file with mode 0600, and contain a valid token; '
+                'check HARNESS_BRIDGE_TOKEN_FILE or server.token_file'
+            ) from None
+
+
 def bearer_authorized(headers):
     if not _SERVER.get('require_token', True):
         return True
     try:
-        path = os.environ.get('HARNESS_BRIDGE_TOKEN_FILE') or _SERVER['token_file']
-        # Validate the opened file, avoiding a stat/read race and refusing symlinks.
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-        with os.fdopen(fd, 'rb') as stream:
-            info = os.fstat(stream.fileno())
-            if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600 or info.st_uid != os.geteuid():
-                return False
-            token = stream.read(4097).strip()
-        if not token or len(token) > 4096 or any(c < 33 or c > 126 for c in token):
-            return False
+        token = read_bearer_token()
         supplied = headers.get_all('Authorization', [])
         return len(supplied) == 1 and hmac.compare_digest(supplied[0].encode('utf-8'), b'Bearer ' + token)
     except (OSError, ValueError, KeyError, UnicodeError):
@@ -382,6 +399,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 if __name__ == '__main__':
     os.umask(0o077)
+    validate_startup_token()
     if not WORKSPACE.is_dir():
         raise RuntimeError(f'Configured workspace is missing: {WORKSPACE}')
     if INTERRUPTED_JOBS:

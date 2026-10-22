@@ -21,8 +21,10 @@
 #   7  curl failed on the relay host (bridge unreachable, timeout; curl exit code on stderr)
 # Token header travels over SSH stdin, never command arguments or dry-run output.
 #
-# Relay-host hardening (recommended): put the key in authorized_keys with
-#   restrict,command="<a wrapper that only allows curl to $RELAY_TARGET_HOSTPORT>" ssh-ed25519 AAAA... relay
+# Remote login shell must be Bash >= 5.1 (older Bash/zsh may spill auth here-docs to disk).
+# See docs/relay-security.md for a stdin/anonymous-pipe forced-command alternative.
+# Restricted command= wrapper and matching caller example: docs/relay-security.md.
+# The example uses a separate METHOD PATH protocol, not this inline remote command.
 set -uo pipefail
 
 D="$(cd "$(dirname "$0")/../bin" && pwd)"; . "$D/_env.sh"

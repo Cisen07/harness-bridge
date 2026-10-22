@@ -240,6 +240,27 @@ class HttpBoundary(unittest.TestCase):
                     path.unlink()
                     self.assertEqual(self.call(omit=('Authorization',)), 202)
 
+    def test_startup_requires_valid_token_before_listening(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as folder:
+            path = pathlib.Path(folder) / 'credential'
+            env = dict(os.environ, HARNESS_BRIDGE_TOKEN_FILE=str(path))
+            for mode in (None, 0o644):
+                if mode is not None:
+                    path.write_text('test-key\n')
+                    path.chmod(mode)
+                result = subprocess.run([sys.executable, '-B', str(ROOT / 'bridge/codex_bridge.py')],
+                                        env=env, capture_output=True, text=True, timeout=10)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('Cannot start: Bearer token file', result.stderr)
+                self.assertNotIn('listening on', result.stdout)
+                self.assertNotIn('test-key', result.stderr)
+            path.chmod(0o600)
+            with mock.patch.dict(os.environ, HARNESS_BRIDGE_TOKEN_FILE=str(path)):
+                T.B.validate_startup_token()
+                path.unlink()
+                with mock.patch.dict(T.B._SERVER, require_token=False):
+                    T.B.validate_startup_token()
+
     def test_read_timeout(self):
         self.assertEqual(T.B.Handler.timeout, 30)
 

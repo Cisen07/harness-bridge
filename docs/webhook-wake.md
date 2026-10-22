@@ -54,3 +54,14 @@ Bridge: `{"job_id","status","backend","host"}`. SSH worker: `{"job_id","backend"
 Mac CLI jobs run in a new process group; on timeout the bridge kills that group. Descendants
 that explicitly escape the group are outside this guarantee. SSH timeouts only stop the local
 transport; they do not guarantee remote processes have stopped. Inspect the remote host before retrying.
+
+## Receiver idempotency
+Treat webhook delivery as potentially duplicated: the receiver must deduplicate
+by `job_id` (namespace by trusted host/backend if multiple independent producers
+share a receiver). Persist an atomic unique record before scheduling downstream
+work; concurrent deliveries for the same job must not trigger duplicate actions.
+Return a successful 2xx for an already accepted job. Use a durable queue/outbox
+so a crash after recording the id can resume processing. Keep deduplication
+records for at least the job retention/replay window (30 days by default).
+Fetch the authenticated job result before acting; webhook delivery is best effort,
+so retain polling/reconciliation for missing wakes.

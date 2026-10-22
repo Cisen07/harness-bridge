@@ -20,3 +20,23 @@ Run these on the Mac (by hand, or as a job on that Mac's own bridge). `D` = brid
 - Use `python3 -B` everywhere so no `__pycache__` is created next to the bridge.
 - Never use `launchctl submit` (KeepAlive restarts it forever); use `kickstart -k`.
 - Keep `webhook.conf` out of the deploy bundle; it is per machine and contains the key.
+
+## Private logs and retention
+The detached restart helper defaults to
+`~/Library/Logs/harness-bridge/restart.log`, with a private directory and a 0600
+new log file; it refuses symlink log targets. Keep custom `--log` paths in a
+private directory rather than shared `/tmp`.
+
+Run a daily retention review/cleanup on the dispatcher. `direct-jobs/*.request`
+contains prompts and may contain wake URLs: remove requests for confirmed
+terminal jobs after 7 days, once result collection and wake reconciliation are
+complete. Never remove requests for queued/running jobs or while a worker may
+still need them. Retain result records and webhook deduplication ids for 30 days
+by default; extend that window if operational replay requires it.
+
+Watchdog `state.bak-*` directories contain Tailscale node keys, just like the
+live `state/` directory. Keep them private (0700 directories, 0600 files), out of
+shared backups and archives. Review daily; remove backups older than 7 days only
+after verifying the current daemon/state is healthy, retaining the newest known
+good backup until then. Never remove live `state/`. Cleanup is an operator task;
+these retention periods are recommendations, not an installed automatic job.

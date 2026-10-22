@@ -53,7 +53,8 @@ Before starting, generate one random shared token (see SECURITY.md), provision i
 and dispatcher using `bridge/bridge.token.example` and `dispatcher/bridge.token.example` as format examples,
 and chmod both files 600. Set `[server] token_file` or `HARNESS_BRIDGE_TOKEN_FILE` on the bridge;
 export `HARNESS_BRIDGE_TOKEN_FILE` on the dispatcher. Defaults are `<bridge dir>/bridge.token` and
-`$HARNESS_HOME/bridge.token`. Missing credentials reject requests; provision them before upgrading.
+`$HARNESS_HOME/bridge.token`. Missing or invalid credentials refuse startup (including non-0600 permissions); provision them before upgrading.
+The file is also checked on every request so unsafe rotation fails closed.
 For manual curl, use the repository's header helper without exposing the token in argv:
 
 ```bash

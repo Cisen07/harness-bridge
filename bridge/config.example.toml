@@ -23,7 +23,10 @@ path = "/Users/<you>/src"        # fixed working directory for both engines
 [codex]
 bin = "/Users/<you>/.local/bin/codex"
 # home = "/Users/<you>/.codex"   # default: $CODEX_HOME or ~/.codex
-sandbox = "danger-full-access"
+sandbox = "workspace-write"
+# Optional relaxation: removes filesystem sandboxing; jobs can access or modify files
+# outside the workspace with your user privileges. Enable only on a trusted host.
+# sandbox = "danger-full-access"
 approval_policy = "never"
 
 [claude]
