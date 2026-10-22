@@ -86,11 +86,24 @@ the private key or plaintext token back through the conversation/job output.
 and inspect both new and snapshot plists (matching Label) in private immutable
 release directories; old plist must point to the previous code/config, new plist
 to the staged release. This script restores the plist, not overwritten source files.
-Ensure no other work is running and the snapshot is known good. Example:
+`--expect-release`, `--plist-new` and `--plist-snapshot` must name real absolute
+paths, with no symlink components (including parent directories). Use physical
+paths such as `/private/...` rather than a symlink alias; the program/script and
+configuration paths inside each plist must also name the real release files.
+Ensure no other work is running and the snapshot is known good.
+
+Before `--execute`, read the production configuration without changing it. Check
+that `[codex] sandbox` and `approval_policy` are both explicitly present, record
+the exact values and configuration path in the private release manifest, and
+ensure the staged configuration matches. A missing value must be resolved before
+execution; do not infer production behavior from the code defaults. After the new
+instance starts, compare its startup log line containing `codex sandbox=` and
+`approval_policy=` with the manifest, and record the comparison before confirmation.
+Example (replace these real-path placeholders with the reviewed release layout):
 
 ```bash
 python3 -B ops/macos/cutover.py --label com.example.bridge \
-  --plist-new /private/release/new.plist --plist-snapshot /private/release/old.plist \
+  --plist-new /private/release/new/bridge.plist --plist-snapshot /private/release/old/bridge.plist \
   --bind <mac-tailnet-ip>:18542 --state-file /private/release/cutover.json \
   --self-check-url http://<mac-tailnet-ip>:18542/health --delay 5 \
   --expect-release /private/release/new \
@@ -184,16 +197,19 @@ is not counted. Current remains mandatory even when next is valid.
 
 ## HMAC challenge (box identity proof)
 
-The **verifier** generates a fresh challenge first, saving it at a previously
-absent private path (0600). These commands use only credential paths, never values:
+The **Mac is the verifier**: it generates a fresh challenge and runs `verify`.
+The **box only runs `make`**, using its own copy of the box source token and the
+Mac-issued nonce; it never issues or verifies this challenge. The Mac saves each
+fresh challenge at a previously absent private path (0600). These commands use only credential paths, never values:
 
 ```sh
-# Verifier: generate and retain the challenge; this command prints nothing.
+# Mac: generate and retain the challenge; this command prints nothing.
 python3 ops/token-provision/hmac_challenge.py verify --token-file /private/box-current \
   --challenge-file /private/hmac-nonce --new-challenge
 # Transfer only the nonce from that file to the maker over an authenticated channel.
+# Box only: make the response using the nonce received from the Mac.
 python3 ops/token-provision/hmac_challenge.py make --token-file /private/box-current --nonce <verifier-nonce>
-# Transfer the returned JSON mac to the verifier. Its saved challenge is consumed.
+# Transfer the returned JSON mac to the Mac. Its saved challenge is consumed.
 python3 ops/token-provision/hmac_challenge.py verify --token-file /private/box-current \
   --challenge-file /private/hmac-nonce --mac <response-mac>
 ```
@@ -204,6 +220,10 @@ prints only `一致` (exit 0) or `不一致` (exit 1); no token or token hash is
 Each verification consumes its local challenge, even on mismatch; generate a new
 challenge before retrying. This proves possession, not network origin. Token and
 challenge paths must be owned regular non-symlink files, mode 0600.
+On the Mac, add `--truncate-only` to `verify --mac ...` to consume the saved
+challenge by truncating it to zero and fsyncing without deleting its inode, on
+both match and mismatch. It cannot be replayed; use a new absent path next time.
+This option is not valid with `--new-challenge`.
 
 ## Relay identity risk
 
@@ -235,6 +255,9 @@ before switching; the startup log reports the actual sandbox and approval policy
 Token paths (current and next) must not be symlinks.
 
 Cutover retries lsof command errors twice before treating the third consecutive
-failure as a failed listener observation. Unsafe or mismatched output fails
-immediately; failed observations reset PID stability. An old `/health` returning
+failure as a failed listener observation, with a one-second pause between retries.
+Unsafe or mismatched output fails immediately; failed observations reset PID stability. An old `/health` returning
 200 cannot pass the tokenless 403 self-check or mark rollback healthy in state.
+
+Both new and rollback check records store `http_status` separately (null until an
+HTTP response is received). Only HTTP 403 passes; 200 is recorded but fails.

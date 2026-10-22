@@ -13,14 +13,18 @@ import sys
 import stat
 
 
-def read_token(path):
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+def read_token(path, truncate=False):
+    fd = os.open(path, (os.O_RDWR if truncate else os.O_RDONLY) | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600 or info.st_uid != os.geteuid():
             raise ValueError('unsafe token file')
         with os.fdopen(fd, 'rb', closefd=False) as stream:
             raw = stream.read(4097)
+        if truncate:
+            # Consume the same validated inode, without following/reopening a path.
+            os.ftruncate(fd, 0)
+            os.fsync(fd)
     finally:
         os.close(fd)
     token = raw.strip()
@@ -38,10 +42,14 @@ def main():
     verify.add_argument('--token-file', required=True)
     make.add_argument('--nonce', required=True)
     verify.add_argument('--challenge-file', required=True)
+    verify.add_argument('--truncate-only', action='store_true',
+                        help='consume challenge by truncating and fsyncing, without unlinking')
     actions = verify.add_mutually_exclusive_group(required=True)
     actions.add_argument('--new-challenge', action='store_true')
     actions.add_argument('--mac')
     args = parser.parse_args()
+    if args.action == 'verify' and args.new_challenge and args.truncate_only:
+        parser.error('--truncate-only requires --mac')
     if args.action == 'verify' and args.new_challenge:
         try:
             fd = os.open(args.challenge_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
@@ -56,9 +64,10 @@ def main():
         if args.action == 'make':
             raw_nonce = args.nonce
         else:
-            raw_nonce = read_token(args.challenge_file).decode('ascii')
+            raw_nonce = read_token(args.challenge_file, truncate=args.truncate_only).decode('ascii')
             # Consume the verifier's saved challenge before checking a response.
-            os.unlink(args.challenge_file)
+            if not args.truncate_only:
+                os.unlink(args.challenge_file)
         token = read_token(args.token_file)
         nonce = bytes.fromhex(raw_nonce)
         if len(nonce) != 32:

@@ -9,6 +9,7 @@ or must be provided by the operator. See config.example.toml.
 """
 import ipaddress
 import json
+import logging
 import os
 import pathlib
 
@@ -116,6 +117,10 @@ def load():
             (str(host) == '127.0.0.1' and allow_loopback)):
         raise ValueError('bind_host must be a tailnet IPv4 address (loopback requires test opt-in)')
     codex = cfg['codex']
+    if codex['sandbox'] not in ('read-only', 'workspace-write', 'danger-full-access'):
+        raise ValueError('codex.sandbox must be read-only, workspace-write or danger-full-access')
+    if codex['sandbox'] == 'danger-full-access':
+        logging.warning('codex sandbox=danger-full-access disables sandbox isolation')
     codex['home'] = codex['home'] or os.environ.get('CODEX_HOME', str(HOME / '.codex'))
     rules = {}
     used_token_paths = set()

@@ -85,6 +85,12 @@ bind_host = "<本机tailnet IP>"
 port = 18543
 journal = "/private/stage/jobs.json"
 token_file = "/private/stage/bridge.token"
+require_per_source_tokens = true
+
+[codex]
+# Copy the explicit production values; this example assumes production uses these.
+sandbox = "danger-full-access"
+approval_policy = "never"
 
 [access]
 allowed_sources = [
@@ -98,5 +104,28 @@ production. Do not modify ACLs for the rehearsal. Code rejects wildcard and
 non-tailnet bind addresses. `server.allow_loopback_for_tests = true` permits only
 127.0.0.1 for isolated tests; it is a test-only option, not a deployment setting.
 
-Every curl example uses `--noproxy '*'` to keep bridge traffic off proxies.
+Set both `[codex]` values explicitly to the production values before rehearsal.
+Omitting `sandbox` falls back to `workspace-write`: it cannot access the network
+or write the cutover confirmation file outside the workspace, so that rehearsal
+would not represent production. Keep source-bound token validation mandatory
+(`require_per_source_tokens = true`); never use global-token fallback here.
+The `bind_host` restrictions are identical to production: only the machine's
+tailnet IPv4 address, never wildcard, LAN or test-loopback deployment settings.
+
+Do not run the 18543 rehearsal instance as a persistent launchd service. Start it
+in the foreground or with `nohup` from an independent terminal, using the separate
+staging configuration. Stop that instance on the same day after rehearsal, then run
+`lsof -nP -iTCP:18543 -sTCP:LISTEN` and verify that no listener remains.
+
+For a box that reaches the Mac through a local SOCKS proxy, use `socks5h` (proxy
+DNS resolution). The empty `--noproxy` explicitly overrides bypass settings:
+
+```bash
+AUTH_HEADER=$(python3 dispatcher/bin/_bridge_auth.py) || exit 1
+curl -q --noproxy '' --proxy socks5h://127.0.0.1:1080 \
+  -H @/dev/fd/3 3< <(printf '%s\n' "$AUTH_HEADER") http://<mac-ip>:18542/health
+unset AUTH_HEADER
+```
+
+Every direct curl example uses `--noproxy '*'` to keep bridge traffic off proxies.
 Token paths must be owned regular files, mode 0600, and must not be symlinks.

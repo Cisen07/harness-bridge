@@ -116,12 +116,14 @@ class OptionalFixes(unittest.TestCase):
     def test_two_transient_lsof_failures_are_tolerated(self):
         output = 'p123\nn127.0.0.1:12345\n'
         for count in (1, 2):
-            with mock.patch.object(cutover, 'run', side_effect=[OSError('fake')] * count + [output]) as run:
+            with mock.patch.object(cutover, 'run', side_effect=[OSError('fake')] * count + [output]) as run, \
+                 mock.patch.object(cutover.time, 'sleep'):
                 self.assertEqual(cutover.listener('127.0.0.1', 12345), '123')
                 self.assertEqual(run.call_count, count + 1)
 
     def test_third_lsof_failure_raises(self):
-        with mock.patch.object(cutover, 'run', side_effect=OSError('fake')) as run:
+        with mock.patch.object(cutover, 'run', side_effect=OSError('fake')) as run, \
+             mock.patch.object(cutover.time, 'sleep'):
             with self.assertRaises(OSError): cutover.listener('127.0.0.1', 12345)
             self.assertEqual(run.call_count, 3)
 
@@ -148,6 +150,7 @@ class OptionalFixes(unittest.TestCase):
                 result = cutover.execute(a, d / 'target', clock=lambda: now[0], sleep=sleep)
             self.assertEqual(result['phase'], 'rollback_failed')
             self.assertFalse(result['checks']['rollback']['self_check'])
+            self.assertEqual(result['checks']['rollback']['http_status'], 200)
             self.assertNotIn('pid', result['checks']['rollback'])
             self.assertEqual(json.loads(a.state_file.read_text())['phase'], 'rollback_failed')
 

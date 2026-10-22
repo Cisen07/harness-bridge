@@ -88,6 +88,7 @@ def lsof_output(port):
         except (OSError, subprocess.SubprocessError):
             if attempt == 2:
                 raise
+            time.sleep(1)
 
 
 def listener(host, port, label=None, release=None):
@@ -121,7 +122,7 @@ def check(host, port, url=None, clock=time.monotonic, sleep=time.sleep, label=No
     start = clock()
     stable_since = None
     last = None
-    result = {'listener': False, 'pid_stable': False, 'self_check': url is None}
+    result = {'listener': False, 'pid_stable': False, 'self_check': url is None, 'http_status': None}
     while clock() - start < 60:
         try:
             current = listener(host, port, label, release)
@@ -137,14 +138,17 @@ def check(host, port, url=None, clock=time.monotonic, sleep=time.sleep, label=No
                     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
                     try:
                         with opener.open(url, timeout=min(3, max(0.01, 60 - (clock() - start)))) as response:
+                            result['http_status'] = response.status
                             result['self_check'] = response.status == 403
                     except urllib.error.HTTPError as error:
+                        result['http_status'] = error.code
                         result['self_check'] = error.code == 403
                 if result['self_check']:
                     result['pid'] = current
                     return result
         except ValueError:
-            return {'listener': False, 'pid_stable': False, 'self_check': False}
+            result.update(listener=False, pid_stable=False, self_check=False)
+            return result
         except (OSError, subprocess.SubprocessError):
             result.update(listener=False, pid_stable=False, self_check=url is None)
             stable_since = None
@@ -159,7 +163,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def success(checks):
-    return all(checks.values())
+    return all(value for key, value in checks.items() if key != 'http_status')
 
 
 def execute(a, target, clock=None, sleep=None):

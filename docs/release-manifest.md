@@ -5,12 +5,15 @@ Store the completed topology-sensitive manifest privately, outside the public re
 
 - Release commit (full SHA): `<commit>`
 - Prepared by / time / review: `<owner, UTC, reviewer>`
-- Release directory: `<absolute path>`
+- Release directory (no symlink components): `<absolute physical path>`
 - Source rules: `<source IP placeholder, whois tag/node, allowed identity>`
 - Token paths (no values): `<source: current absolute path, optional next absolute path>`
 - Token validation (HMAC challenge; only 一致 or 不一致): `<一致 / 不一致>`
 - Token rotation date: `<YYYY-MM-DD>`
-- Actual Codex sandbox: `<workspace-write / danger-full-access / other actual value>`
+- Real production configuration path (read-only review): `<absolute physical path>`
+- Explicit production Codex sandbox: `<read-only / workspace-write / danger-full-access>`
+- Explicit production Codex approval_policy: `<actual value>`
+- Staged values match production / new startup `codex sandbox=` and approval_policy match: `<values / reviewer / outcome>`
 - Relay key public fingerprint: `<SHA256 public-key fingerprint>`
 - Rollback snapshot location: `<absolute path>`
 - Rollback target commit / authentication enabled: `<commit / yes or no>`
