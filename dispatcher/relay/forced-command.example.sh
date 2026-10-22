@@ -8,7 +8,7 @@ if (( BASH_VERSINFO[0] < 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] < 1) ))
   exit 2
 fi
 TARGET='100.x.y.z:18542'  # replace with the single trusted bridge endpoint
-command_re='^(GET|POST) (/health|/backends|/jobs|/jobs/[a-f0-9-]{36})$'
+command_re='^(GET|POST) (/health|/backends|/jobs|/jobs/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$'
 [[ ${SSH_ORIGINAL_COMMAND:-} =~ $command_re ]] || exit 2
 method=${BASH_REMATCH[1]}; path=${BASH_REMATCH[2]}
 if [[ $method = POST ]]; then

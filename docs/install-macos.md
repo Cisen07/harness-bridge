@@ -33,6 +33,8 @@ tail -f "$BRIDGE_DIR/launchd.stdout.log"     # "harness-bridge listening on <ip>
 macOS may ask once for permissions (e.g. local network / files) for the python binary; a dedicated copy of python
 makes this prompt easy to recognize.
 
+If the log shows `Cannot start ...` and launchd keeps relaunching the job (about every 10s under `KeepAlive`), fix the token file first: it must exist, be non-empty, and be mode 0600. The bridge refuses to start on a missing or invalid token and exits before listening, so the restart loop continues until the token file is corrected.
+
 ## 4. Webhook
 `cp bridge/webhook.conf.example "$BRIDGE_DIR/webhook.conf" && chmod 600 "$BRIDGE_DIR/webhook.conf"`, then fill in the
 routine URL and `Bearer <key>` (see webhook-wake.md).
