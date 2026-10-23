@@ -1,5 +1,5 @@
 {
-  "_comment": "SSH-mode targets for direct_ssh_client.py. Copy to $HARNESS_HOME/targets.json (chmod 600). Keys starting with _ are ignored. Backend names: lowercase letters, digits, dashes. ssh_key is relative to $HARNESS_HOME or absolute. switch_helper is optional (claude only): a script supporting `<helper> export <model>` that prints shell exports for that model.",
+  "_comment": "SSH-mode targets for direct_ssh_client.py. Copy to $HARNESS_HOME/targets.json (chmod 600). Keys starting with _ are ignored. Backend names: lowercase letters, digits, dashes. ssh_key is relative to $HARNESS_HOME or absolute. switch_helper is optional (claude only): a script supporting `<helper> export <model>` that prints shell exports for that model. Optional Ada-only backends tw-tl-codex / tw-tl-claudecode use a dedicated workspace (\u2026/src-tech-leader); do not point ordinary bots at them. Real hosts stay in private $HARNESS_HOME/targets.json only.",
   "ubuntu-a-codex": {
     "host": "100.x.y.3",
     "user": "<remote-user>",
@@ -24,5 +24,24 @@
     "entry": "/usr/local/bin/codex",
     "engine": "codex",
     "ssh_key": "ssh/id_ed25519_ubuntu-b"
+  },
+  "tw-tl-codex": {
+    "host": "100.x.y.3",
+    "user": "<remote-user>",
+    "workspace": "/home/<remote-user>/go/src-tech-leader",
+    "entry": "/home/<remote-user>/.local/bin/codex",
+    "engine": "codex",
+    "ssh_key": "ssh/id_ed25519_ubuntu-a",
+    "_comment": "Ada tech-leader Codex only; placeholder host/path \u2014 copy to private targets.json with real values."
+  },
+  "tw-tl-claudecode": {
+    "host": "100.x.y.3",
+    "user": "<remote-user>",
+    "workspace": "/home/<remote-user>/go/src-tech-leader",
+    "entry": "/home/<remote-user>/.local/bin/claude",
+    "engine": "claude",
+    "ssh_key": "ssh/id_ed25519_ubuntu-a",
+    "switch_helper": "/home/<remote-user>/tools/model-switch/run.sh",
+    "_comment": "Ada tech-leader Claude Code only; same dedicated workspace as tw-tl-codex."
   }
 }

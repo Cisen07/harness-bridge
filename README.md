@@ -42,7 +42,8 @@ scripts/       scrub_check.sh (used by CI together with gitleaks)
    run `dispatcher/tailscale/start-tailscaled.sh` and log in once.
 3. Mac: [docs/install-macos.md](docs/install-macos.md) (config.toml, launchd, webhook.conf).
 4. Ubuntu: [docs/install-ubuntu.md](docs/install-ubuntu.md) (SSH key, targets.json).
-5. Webhook wake: [docs/webhook-wake.md](docs/webhook-wake.md). Remember: `WEBHOOK_AUTH=Bearer <key>` exactly.
+5. Optional Ada tech-leader backends: add `tw-tl-codex` / `tw-tl-claudecode` placeholders from `dispatcher/targets.example.json` into your **private** `$HARNESS_HOME/targets.json` (workspace like `…/src-tech-leader`, fake IPs only in the example). Do not commit real hosts.
+6. Webhook wake: [docs/webhook-wake.md](docs/webhook-wake.md). Remember: `WEBHOOK_AUTH=Bearer <key>` exactly.
 
 ## Security
 Read [SECURITY.md](SECURITY.md). Short version: the bridge binds to a tailnet IP only, every caller must be in an
