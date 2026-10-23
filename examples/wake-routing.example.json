@@ -1,0 +1,38 @@
+{
+  "_comment": "Copy to $HARNESS_HOME/wake/routing.json (mode 0600). Fictional bots and fingerprints only — real webhook URLs, keys, and bot inventories stay private.",
+  "version": 1,
+  "forbidden_legacy_env_for_non_legacy": ["WEBHOOK_URL"],
+  "bots": {
+    "BotA": {
+      "aliases": ["a", "bota"],
+      "url_env": "BOT_A_WAKE_URL",
+      "key_env": "BOT_A_WAKE_KEY",
+      "url_file": "wake/bota.url",
+      "url_fp": {"last12": "aaaabbbbcccc", "len": 64, "sha8": "deadbeef"},
+      "allow_legacy_env": false,
+      "owner_bot": "BotA"
+    },
+    "BotB": {
+      "aliases": ["b", "botb"],
+      "url_env": "BOT_B_WAKE_URL",
+      "key_env": "BOT_B_WAKE_KEY",
+      "url_file": "wake/botb.url",
+      "url_fp": {"last12": "ddddeeeeffff", "len": 64, "sha8": "cafebabe"},
+      "allow_legacy_env": false,
+      "owner_bot": "BotB"
+    },
+    "LegacyBot": {
+      "aliases": ["legacy"],
+      "url_env": "LEGACY_WAKE_URL",
+      "key_env": "LEGACY_WAKE_KEY",
+      "url_fp": {"last12": "111122223333", "len": 64, "sha8": "00ff00ff"},
+      "allow_legacy_env": true,
+      "legacy_env": {
+        "url": "WEBHOOK_URL",
+        "auth_header_or_key": "WEBHOOK_AUTH"
+      },
+      "owner_bot": "LegacyBot",
+      "_comment": "Only this entry may fall back to WEBHOOK_* names."
+    }
+  }
+}

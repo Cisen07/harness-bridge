@@ -61,3 +61,9 @@ SCRUB-REPORT.md
 !/ops/token-provision/
 !/ops/token-provision/*.py
 !/ops/token-provision/*.sh
+
+# Private G1/G2 deploy overlays (examples stay tracked)
+ops/compat/aliases.json
+wake/routing.json
+wake/*.url
+wake-closeout.json

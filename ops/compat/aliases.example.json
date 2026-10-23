@@ -1,0 +1,8 @@
+{
+  "_comment": "Copy to aliases.json (gitignored / private deploy). Maps short call-surface names to backends in targets.json. Real host inventory stays out of this repository.",
+  "allowed": ["host-a", "host-b"],
+  "aliases": {
+    "host-a": "ubuntu-a-codex",
+    "host-b": "ubuntu-b-codex"
+  }
+}
