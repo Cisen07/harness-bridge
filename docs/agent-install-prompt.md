@@ -1,7 +1,10 @@
 # Agent-internal playbook: install Harness Bridge
 
 This document is for the installation agent to read and execute, not a form for the user to fill in.
-The user only needs the short paste at the top of [README](../README.md).
+When a user asks to install this repository, first read and follow this playbook. The complete user
+paste is just: 帮我安装 https://github.com/Cisen07/harness-bridge。
+Do not require the user to paste question-format rules or instructions to read this document;
+the installation agent is responsible for applying the UX below.
 [INSTALL](../INSTALL.md) is the human appendix.
 
 **Mandatory first step: if any prerequisite is unresolved, ask before installing. Use multiple-choice
