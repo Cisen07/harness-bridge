@@ -60,6 +60,31 @@ Mac CLI jobs run in a new process group; on timeout the bridge kills that group.
 that explicitly escape the group are outside this guarantee. SSH timeouts only stop the local
 transport; they do not guarantee remote processes have stopped. Inspect the remote host before retrying.
 
+## 2c. One-to-one wake routing (dispatcher helpers)
+
+Multi-bot dispatchers must not share a single `WEBHOOK_URL`. Keep a private routing
+file at `$HARNESS_HOME/wake/routing.json` (start from
+[`examples/wake-routing.example.json`](../examples/wake-routing.example.json)).
+
+Helpers (no network I/O except the existing submit client):
+
+| Helper | Role |
+|---|---|
+| `dispatcher/bin/wake_finalize.py` | Resolve bot→wake, refuse fingerprint collisions / foreign overwrite / legacy-env misuse; `--finalize` marks a job_id closed idempotently in a local state file |
+| `dispatcher/bin/harness_submit.py` | Inject the resolved wake into a submit request, then call `direct_ssh_client.py submit` |
+
+```bash
+export HARNESS_WAKE_URL_PREFIX='https://hooks.example.invalid/wake'
+export BOT_A_WAKE_URL='https://hooks.example.invalid/wake/aaaabbbbcccc'
+export BOT_A_WAKE_KEY='test-key-not-real'
+# dry-run inject (no submit):
+echo '{"backend":"ubuntu-a-codex","prompt":"ping"}' \
+  | dispatcher/bin/harness_submit.py BotA --dry-inject
+```
+
+Trusted URL prefix still comes from `HARNESS_WAKE_URL_PREFIX` (see §2b). Real bot
+names, webhook paths and keys stay in the private routing file and environment.
+
 ## Receiver idempotency (integrator responsibility)
 The public examples do not implement concurrent exactly-once ledger accounting or receiver locking;
 `_job_summary.py` has a read-then-append race. The following is guidance for integrators requiring those guarantees.

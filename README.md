@@ -41,8 +41,8 @@ included for experiments).
 ## Repository layout
 ```
 bridge/        HTTP job API that runs on each Mac (config.example.toml, webhook.conf.example, service templates, tests)
-dispatcher/    runs on the bot's box: SSH-mode client, wait scripts, relay fallback, userspace tailscaled helpers
-ops/           push_file.sh (sha-verified copy), detached bridge restart, optional patrol
+dispatcher/    runs on the bot's box: SSH-mode client, wait scripts, wake routing/submit helpers, relay fallback, userspace tailscaled helpers
+ops/           push_file.sh (sha-verified copy), compat/ alias entry, detached bridge restart, optional patrol
 skills/        bot skill templates: mac-dispatch (HTTP mode), ssh-dispatch (SSH mode)
 docs/          architecture, api, webhook-wake, install-macos, install-ubuntu, tailscale-acl, deploy-and-rollback
 examples/      request / response / webhook payload samples
