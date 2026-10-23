@@ -5,7 +5,7 @@ SSHes in per job and runs the native CLI. (The repository does not maintain a Li
 `bridge/service/` is an unsupported experiment.)
 
 Requires Python 3.11+ on the dispatcher (CI: 3.12). Start with the
-[agent installation prompt](agent-install-prompt.md) for directory and script installation.
+[agent installation playbook](agent-install-prompt.md) for directory and script installation.
 
 ## On the host
 1. Tailscale installed and logged in; note its tailnet IP.

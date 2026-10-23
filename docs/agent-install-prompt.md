@@ -1,11 +1,60 @@
-# Copy-paste prompt: install Harness Bridge with an agent
+# Agent-internal playbook: install Harness Bridge
 
-Paste everything between the rules below into Grok Bot or your installation agent.
-This is the primary installation deliverable; [INSTALL](../INSTALL.md) is the human appendix.
+This document is for the installation agent to read and execute, not a form for the user to fill in.
+The user only needs the short paste at the top of [README](../README.md).
+[INSTALL](../INSTALL.md) is the human appendix.
 
----
+**Mandatory first step: if any prerequisite is unresolved, ask before installing. Use multiple-choice
+questions with explicit options (single-select or multi-select as appropriate); never hand the user a
+long blank form or ask them to paste this whole document.** Reuse answers already provided, present
+only unresolved questions in small batches, and ask concise follow-ups for concrete paths or hosts
+only when the selected option requires them. Do not infer consent from a recommended default.
 
-Install Cisen07/harness-bridge for my bot. Execute the following phases **in order** and
+## 0. Collect prerequisite choices before taking action
+
+Ask all five questions below unless the answer is already explicit in the conversation:
+
+1. **Where should we install?** (Multi-select if more than one machine is involved.)
+   - This machine, using a local path.
+   - A remote machine reached over SSH.
+   Follow up for the local installation/workspace path or SSH destination, account and remote path
+   as needed. Identify the dispatcher and each target, and confirm authorization for each machine.
+2. **Which mode?** (Single-select.)
+   - Mac HTTP bridge.
+   - Linux SSH.
+   - Both.
+   Map each selected mode to its target and dispatcher; ask about any missing machine details.
+3. **Is Tailscale available on the dispatcher and selected targets?** (Single-select per machine
+   if their answers differ.)
+   - Already available.
+   - Not installed or not configured yet.
+   - Unsure.
+   For an unsure answer, offer an authorized read-only check. For a missing setup, establish the
+   approved setup/login path and ACL access before installing. Do not assume tailnet membership or
+   permission to modify ACLs from the mode selection.
+4. **Where should the private runtime live (`HARNESS_HOME`)?** (Single-select.)
+   - Use the recommended dispatcher default, `$HOME/harness`.
+   - Use a path I specify.
+   Resolve the chosen absolute path on the dispatcher. For Mac HTTP, also confirm a separate Mac
+   bridge runtime path (recommend `$HOME/harness-bridge-runtime`). Keep runtime state out of source.
+5. **Configure wake during this installation?** (Single-select.)
+   - Configure it now, after the first successful job and readback.
+   - Skip it for now.
+   Record this choice; skipping wake does not skip compensating job queries.
+
+Before phase 1, summarize the selected machines/roles, mode, Tailscale readiness, runtime paths and
+wake choice without credential values. Resolve missing or inconsistent answers with further choices.
+Reading this repository to prepare the questions is allowed; do not install dependencies, write
+runtime configuration, start services or submit jobs until prerequisites are complete.
+
+If access, credentials, ACL permission or native CLI login is missing at any phase, **stop and report
+only the missing field names and the blocked phase**, never credential values. Use the actual
+configuration field name when available; for access/login prerequisites use names such as
+`ssh_access`, `tailscale_login`, `tailscale_acl_permission`, `codex_cli_login` or `claude_cli_login`.
+Have the operator supply secrets through the authorized private provisioning channel, not in chat.
+A missing credential is a blocked installation, not a request to paste a secret into the conversation.
+
+Install Cisen07/harness-bridge on the selected machines. Execute the following phases **in order** and
 record each check before advancing. Use Python **3.11+** everywhere (CI uses **3.12**).
 Use only authorized machines; if a machine, account, tailnet or credential is unavailable,
 stop at that boundary and report the missing field names. Do not weaken authentication to proceed.
@@ -19,6 +68,10 @@ Use a clean checkout for source and a separate private runtime directory. Recomm
 release commit SHA; record the chosen SHA. Do not invent a tag or treat an arbitrary branch as a
 fixed release. Personal use can discover drift and iterate; no fleet-wide hash ritual is needed.
 
+Run each transport-specific step only for the modes selected in phase 0. Execute commands on the
+approved machine and adapt the example source checkout path below to the selected local or remote
+path; keep the approved runtime path in `HARNESS_HOME`.
+
 On the **dispatcher** (the supplied userspace tailscaled launcher targets Linux amd64), run:
 
 ```bash
@@ -28,7 +81,8 @@ git clone https://github.com/Cisen07/harness-bridge.git "$HOME/src/harness-bridg
 cd "$HOME/src/harness-bridge"
 # If already cloned, inspect local changes before fetching/updating; do not overwrite them.
 # git checkout --detach <chosen-release-SHA>
-export HARNESS_HOME="$HOME/harness"
+# Set HARNESS_HOME to the dispatcher path chosen in phase 0 before running this block.
+export HARNESS_HOME="${HARNESS_HOME:?Set the phase-0 approved runtime path first}"
 mkdir -p "$HARNESS_HOME" "$HARNESS_HOME/bin" "$HARNESS_HOME/ssh" \
   "$HARNESS_HOME/run" "$HARNESS_HOME/state" "$HARNESS_HOME/direct-jobs" \
   "$HARNESS_HOME/tailscale" "$HARNESS_HOME/results"
@@ -121,7 +175,11 @@ Record job_id, backend, terminal status and result verification. Wait exit 0 mea
 necessarily completed: inspect `status` and `error` before declaring success. Keep full output private.
 If acceptance is uncertain, query/reconcile instead of blindly resubmitting.
 
-## 4. Enable wake only AFTER the first successful readback
+## 4. Optional wake, only AFTER the first successful readback
+
+If phase 0 selected "skip it for now", leave wake disabled in the new runtime, skip the provisioning
+and wake tests in this phase, and continue to phase 5. Do not request wake credentials in that case.
+If wake was selected, follow the steps below; missing credentials block this phase.
 
 Follow [webhook-wake](webhook-wake.md). Have the operator provision the routine endpoint and key
 privately; do not put either in chat, public files or command arguments.
@@ -142,7 +200,9 @@ Persist the returned job_id and trusted producer/backend route at submission. Wh
 use the **same readback path** (`mac_wait.sh` or `job_wait.sh` / SSH `status`) with that job_id.
 Arrange a bot-platform timer or periodic reconciliation of outstanding jobs; a fallback script sitting
 unused is insufficient. Verify compensation with a job submitted without SSH wake (or on a separate
-Mac test runtime with no webhook), while the wake-enabled job demonstrates receipt and readback.
+Mac test runtime with no webhook). If wake was selected, also verify that a wake-enabled job
+demonstrates receipt and readback.
+When wake is deferred, configure and verify periodic readback of outstanding jobs without notifications.
 Never resubmit just because a wake was missed.
 
 On SSH wait code 3 (worker gone) or stale queued/running state, inspect the remote CLI and reconcile
@@ -166,9 +226,8 @@ bash scripts/scrub_check.sh
 ```
 
 Report source SHA, Python/OS/CLI versions actually used, installed script paths, private field presence
-and permission checks, no-wake job/readback, wake job/readback and compensation evidence separately.
+and permission checks, no-wake job/readback and compensation evidence separately. Report wake
+job/readback evidence if selected; otherwise mark wake as deferred, not tested or validated.
 Do not claim a live OS/CLI matrix from unit tests: repository CI verifies mocked behavior on Ubuntu /
 Python 3.12; live macOS + Codex/Claude and Linux SSH + Codex/Claude require your own smoke results.
 If credentials or machine access are missing, report installation as blocked at that phase, not validated.
-
----
