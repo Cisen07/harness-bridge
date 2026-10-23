@@ -1,14 +1,13 @@
 # harness-bridge
 
-**Start here:** paste these three lines into your Grok Bot / installation agent:
+**Start here:** paste this one sentence into your Grok Bot / installation agent:
 
 ```text
 帮我安装 https://github.com/Cisen07/harness-bridge。
-先用选择题问齐前置条件，再动手安装；不要让我填写长空表单。
-细节请读取并遵循仓内 docs/agent-install-prompt.md。
 ```
 
-The [agent installation playbook](docs/agent-install-prompt.md) guides the questions and execution.
+**For installation agents:** when a user asks to install this repository, first read and follow
+[docs/agent-install-prompt.md](docs/agent-install-prompt.md).
 The human [INSTALL appendix](INSTALL.md) follows the same order.
 
 Run native coding-agent CLIs (**Codex CLI** and **Claude Code**) on your own machines from a cloud bot
