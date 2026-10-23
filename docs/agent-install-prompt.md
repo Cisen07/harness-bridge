@@ -41,9 +41,11 @@ Ask all five questions below unless the answer is already explicit in the conver
    Resolve the chosen absolute path on the dispatcher. For Mac HTTP, also confirm a separate Mac
    bridge runtime path (recommend `$HOME/harness-bridge-runtime`). Keep runtime state out of source.
 5. **Configure wake during this installation?** (Single-select.)
-   - Configure it now, after the first successful job and readback.
-   - Skip it for now.
-   Record this choice; skipping wake does not skip compensating job queries.
+   - **Recommended default: configure wake now**, after the first successful job and readback.
+   - Skip it for now — available only when the webhook URL or key is not yet available.
+   Wake is the primary experience path. Polling and compensating readback are mandatory fallbacks,
+   not the routine primary path. Record this choice; skipping wake means a degraded experience
+   and does not skip compensating job queries. Never ask for URL or key values in chat.
 
 Before phase 1, summarize the selected machines/roles, mode, Tailscale readiness, runtime paths and
 wake choice without credential values. Resolve missing or inconsistent answers with further choices.
@@ -178,11 +180,16 @@ Record job_id, backend, terminal status and result verification. Wait exit 0 mea
 necessarily completed: inspect `status` and `error` before declaring success. Keep full output private.
 If acceptance is uncertain, query/reconcile instead of blindly resubmitting.
 
-## 4. Optional wake, only AFTER the first successful readback
+## 4. Configure wake by default, only AFTER the first successful readback
 
-If phase 0 selected "skip it for now", leave wake disabled in the new runtime, skip the provisioning
-and wake tests in this phase, and continue to phase 5. Do not request wake credentials in that case.
-If wake was selected, follow the steps below; missing credentials block this phase.
+The recommended default is to configure wake as the primary experience path, using the steps below
+after the first successful readback and the explicit phase-0 choice. A recommendation is not consent;
+missing credentials block this phase if wake was selected.
+
+Only when the webhook URL or key is not yet available may phase 0 select "skip it for now". In that
+case, leave wake disabled in the new runtime, skip provisioning and wake tests in this phase, and
+continue to phase 5, where configuring and verifying compensating polling remains mandatory.
+Record **wake not installed = degraded experience**. Do not request wake credentials in that case.
 
 Follow [webhook-wake](webhook-wake.md). Have the operator provision the routine endpoint and key
 privately; do not put either in chat, public files or command arguments.
@@ -198,6 +205,10 @@ real job; follow [receive-then-read reference](../examples/wake-readback.md). A 
 not result verification or proof of one-to-one ownership.
 
 ## 5. Mandatory compensation and boundaries
+
+Polling and compensating readback must remain configured and verified as fallbacks even with wake
+installed; they must not replace wake as the routine primary path. If wake is deferred because its
+URL or key is unavailable, use verified periodic readback as the temporary degraded path.
 
 Persist the returned job_id and trusted producer/backend route at submission. When a wake is overdue,
 use the **same readback path** (`mac_wait.sh` or `job_wait.sh` / SSH `status`) with that job_id.
@@ -230,7 +241,8 @@ bash scripts/scrub_check.sh
 
 Report source SHA, Python/OS/CLI versions actually used, installed script paths, private field presence
 and permission checks, no-wake job/readback and compensation evidence separately. Report wake
-job/readback evidence if selected; otherwise mark wake as deferred, not tested or validated.
+job/readback evidence if selected; otherwise mark wake as deferred, not tested or validated, and
+explicitly state **wake not installed = degraded experience** with compensation verification evidence.
 Do not claim a live OS/CLI matrix from unit tests: repository CI verifies mocked behavior on Ubuntu /
 Python 3.12; live macOS + Codex/Claude and Linux SSH + Codex/Claude require your own smoke results.
 If credentials or machine access are missing, report installation as blocked at that phase, not validated.

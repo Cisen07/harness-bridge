@@ -11,8 +11,10 @@
 The human [INSTALL appendix](INSTALL.md) follows the same order.
 
 Run native coding-agent CLIs (**Codex CLI** and **Claude Code**) on your own machines from a cloud bot
-("dispatcher"), over a private **Tailscale** tailnet. Optional webhook wake is **best-effort**:
-notifications can be lost or duplicated, so every integration must retain compensating job queries.
+("dispatcher"), over a private **Tailscale** tailnet. Webhook wake is the **recommended default** and
+primary experience path, with **best-effort** delivery: notifications can be lost or duplicated, so
+every integration must retain polling / compensating job queries as fallbacks, not the routine primary path.
+Defer wake only when its URL or key is unavailable; wake not installed means a degraded experience.
 Python **3.11+** is required throughout; CI runs Python **3.12**.
 
 ```
@@ -50,7 +52,7 @@ scripts/       scrub_check.sh (used by CI together with gitleaks)
 ## Install and releases
 Follow the [agent installation playbook](docs/agent-install-prompt.md) in order:
 prerequisite choices → directory layout → private targets/tokens before startup → minimal job without wake →
-optional wake → compensating readback.
+wake (recommended default) → mandatory compensating readback.
 The [INSTALL appendix](INSTALL.md) links the platform details.
 
 Shared implementation comes from this repository; private configuration and instance state stay on each deployment.
