@@ -1,6 +1,14 @@
 # harness-bridge
 
-**Start here:** give your Grok Bot / agent the [copy-paste installation prompt](docs/agent-install-prompt.md).
+**Start here:** paste these three lines into your Grok Bot / installation agent:
+
+```text
+帮我安装 https://github.com/Cisen07/harness-bridge。
+先用选择题问齐前置条件，再动手安装；不要让我填写长空表单。
+细节请读取并遵循仓内 docs/agent-install-prompt.md。
+```
+
+The [agent installation playbook](docs/agent-install-prompt.md) guides the questions and execution.
 The human [INSTALL appendix](INSTALL.md) follows the same order.
 
 Run native coding-agent CLIs (**Codex CLI** and **Claude Code**) on your own machines from a cloud bot
@@ -41,8 +49,9 @@ scripts/       scrub_check.sh (used by CI together with gitleaks)
 ```
 
 ## Install and releases
-Follow the [agent installation prompt](docs/agent-install-prompt.md) in order:
-directory layout → private targets/tokens before startup → minimal job without wake → enable wake → compensating readback.
+Follow the [agent installation playbook](docs/agent-install-prompt.md) in order:
+prerequisite choices → directory layout → private targets/tokens before startup → minimal job without wake →
+optional wake → compensating readback.
 The [INSTALL appendix](INSTALL.md) links the platform details.
 
 Shared implementation comes from this repository; private configuration and instance state stay on each deployment.

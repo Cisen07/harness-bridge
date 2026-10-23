@@ -1,6 +1,7 @@
 # Human installation appendix
 
-The primary path is the [copy-paste agent installation prompt](docs/agent-install-prompt.md).
+Start with the short paste at the top of [README](README.md). The agent then follows the
+[internal installation playbook](docs/agent-install-prompt.md), beginning with prerequisite choices.
 Use this appendix when installing manually; follow the same order.
 
 1. **Layout and prerequisites:** Python 3.11+ on the dispatcher and Mac (CI: 3.12),
@@ -13,8 +14,9 @@ Use this appendix when installing manually; follow the same order.
 3. **Start and verify without wake:** follow [Mac](docs/install-macos.md) or
    [Linux SSH](docs/install-ubuntu.md). Start only after private files are provisioned. Submit
    a tiny task, retain its job_id, then use authenticated GET / wait / status to verify completed + result.
-4. **Enable wake:** provision private routine settings using [webhook wake](docs/webhook-wake.md),
+4. **Optional wake:** if selected in the prerequisite questions, provision private routine settings using [webhook wake](docs/webhook-wake.md),
    then test receipt **and** real-result readback via the [receiver reference](examples/wake-readback.md).
+   Otherwise leave wake deferred and continue to compensation.
 5. **Compensate:** periodically reconcile submitted job_ids even without notifications. Verify this
    path with a no-wake task. Do not resubmit uncertain jobs; inspect SSH worker loss/remote timeouts.
 6. **Record evidence:** chosen source SHA, actual OS/Python/CLI versions, tests and per-transport
