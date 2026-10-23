@@ -28,6 +28,10 @@ def events(*items):
     return '\n'.join(json.dumps(item) for item in items)
 
 
+def _source_groups(rules):
+    return {ip: [dict(rule, name=ip)] for ip, rule in rules.items()}
+
+
 class OutputProtocol(unittest.TestCase):
     def test_empty_incomplete_and_malformed(self):
         for text in ('', 'banner', '[]', events({'type': 'thread.started', 'thread_id': 's'}),
@@ -225,7 +229,7 @@ class HttpBoundary(unittest.TestCase):
             self.assertEqual(self.call(method=method), 200 if method == 'GET' else 202)
 
     @mock.patch.dict(T.B._SERVER, require_per_source_tokens=False)
-    @mock.patch.object(T.B, 'ALLOWED_SOURCES', {'127.0.0.1': {}})
+    @mock.patch.object(T.B, 'ALLOWED_SOURCES', _source_groups({'127.0.0.1': {}}))
     def test_token_files_fail_closed_and_opt_out(self):
         with tempfile.TemporaryDirectory(dir=ROOT) as folder:
             path = pathlib.Path(folder) / 'credential'
@@ -243,7 +247,7 @@ class HttpBoundary(unittest.TestCase):
                     self.assertEqual(self.call(omit=('Authorization',)), 202)
 
     @mock.patch.dict(T.B._SERVER, require_per_source_tokens=False)
-    @mock.patch.object(T.B, 'ALLOWED_SOURCES', {'127.0.0.1': {}})
+    @mock.patch.object(T.B, 'ALLOWED_SOURCES', _source_groups({'127.0.0.1': {}}))
     def test_startup_requires_valid_token_before_listening(self):
         with tempfile.TemporaryDirectory(dir=ROOT) as folder:
             path = pathlib.Path(folder) / 'credential'
@@ -378,18 +382,18 @@ class AdditionalPolicies(unittest.TestCase):
             server.server_close()
 
     @mock.patch.dict(T.B._SERVER, require_per_source_tokens=False)
-    @mock.patch.object(T.B, 'ALLOWED_SOURCES', {'127.0.0.1': {}})
+    @mock.patch.object(T.B, 'ALLOWED_SOURCES', _source_groups({'127.0.0.1': {}}))
     def test_duplicate_auth_and_unsafe_file_rejected(self):
         from email.message import Message
         headers = Message()
         headers.add_header('Authorization', 'Bearer test-key')
         with mock.patch.object(T.B.hmac, 'compare_digest', wraps=T.B.hmac.compare_digest) as compare:
-            self.assertTrue(T.B.bearer_authorized(headers))
+            self.assertTrue(T.B.bearer_authorized(headers, '127.0.0.1'))
             compare.assert_called_once()
         headers.add_header('Authorization', 'Bearer test-key')
-        self.assertFalse(T.B.bearer_authorized(headers))
+        self.assertFalse(T.B.bearer_authorized(headers, '127.0.0.1'))
         with tempfile.TemporaryDirectory(dir=ROOT) as folder:
             link = pathlib.Path(folder) / 'link'
             link.symlink_to(T.TMP / 'bridge.token')
             with mock.patch.dict(os.environ, HARNESS_BRIDGE_TOKEN_FILE=str(link)):
-                self.assertFalse(T.B.bearer_authorized(headers))
+                self.assertFalse(T.B.bearer_authorized(headers, '127.0.0.1'))

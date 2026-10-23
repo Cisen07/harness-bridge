@@ -59,3 +59,29 @@ wrapper with `SSH_ORIGINAL_COMMAND='GET /health'`. Assert one backend request an
 **zero proxy requests**; repeat POST /jobs with a fake JSON body. Confirm invalid
 METHOD/PATH pairs are rejected without either listener receiving a request.
 Remove all temporary files/listeners afterward. Never use live credentials.
+
+## Multiple logical sources behind one relay IP
+
+`access.allowed_sources` may contain several entries with the same `ip`. Give
+each logical source a unique, nonempty `name`, its own `token_files`, and the
+`node` or `tag` of the peer that the bridge actually sees. A relay client's
+rule describes the relay's Tailscale identity, because the bridge sees the
+relay's connection. Missing names default to the entry's IP for compatibility;
+multiple entries sharing an IP therefore need explicit, distinct names.
+
+The bridge selects exactly one rule whose Bearer credential **and** Tailscale
+identity both match. Matching a credential from one rule and a node/tag from
+another is rejected. No match or multiple matches returns HTTP 403, even if
+credentials become duplicated after startup. Forwarded-address headers do not
+select a source. Existing startup checks for distinct credential paths and
+contents apply across all rules, including rules sharing an IP.
+
+New jobs store the selected configured name in `source`; credential fields are
+not copied into job records. This field records attribution. The existing job
+read APIs still allow any authenticated source to read jobs, and session
+exclusion remains shared across sources. Historical jobs retain their existing
+fields; this change does not infer or migrate their source.
+
+Regression tests use documentation-only source addresses, temporary synthetic
+credentials, mocked Tailscale responses and loopback HTTP. This backfill changes
+no installed runtime, relay protocol, service configuration or credential files.

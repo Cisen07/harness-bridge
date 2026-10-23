@@ -32,6 +32,10 @@ P = module('provision2', 'ops/token-provision/provision.py')
 H = module('challenge', 'ops/token-provision/hmac_challenge.py')
 
 
+def _source_groups(rules):
+    return {ip: [dict(rule, name=ip)] for ip, rule in rules.items()}
+
+
 class Cutover(unittest.TestCase):
     def flow(self, scenario):
         with tempfile.TemporaryDirectory() as folder:
@@ -165,7 +169,7 @@ class Tokens(unittest.TestCase):
             current.write_text('fake-current'); current.chmod(0o600)
             rule = {'192.0.2.1': {'node': 'a', 'token_files': [str(current), str(nxt)]}}
             headers = email.message.Message(); headers['Authorization'] = 'Bearer fake-current'
-            with mock.patch.object(T.B, 'ALLOWED_SOURCES', rule):
+            with mock.patch.object(T.B, 'ALLOWED_SOURCES', _source_groups(rule)):
                 for kind in ('mode', 'empty', 'symlink', 'directory'):
                     if nxt.is_symlink() or nxt.is_file(): nxt.unlink()
                     elif nxt.is_dir(): nxt.rmdir()
@@ -217,10 +221,10 @@ class Tokens(unittest.TestCase):
             for slots in ([str(paths[0]), str(paths[1])], [str(paths[0]), str(paths[0])]):
                 for same_source in (True, False):
                     rules = {'a': {'token_files': slots}} if same_source else {'a': {'token_files': slots[:1]}, 'b': {'token_files': slots[1:]}}
-                    with mock.patch.object(T.B, 'ALLOWED_SOURCES', rules), self.assertRaises(RuntimeError):
+                    with mock.patch.object(T.B, 'ALLOWED_SOURCES', _source_groups(rules)), self.assertRaises(RuntimeError):
                         T.B.validate_startup_token()
             paths[1].write_text('fake-unique')
-            with mock.patch.object(T.B, 'ALLOWED_SOURCES', {'a': {'token_files': list(map(str, paths))}}):
+            with mock.patch.object(T.B, 'ALLOWED_SOURCES', _source_groups({'a': {'token_files': list(map(str, paths))}})):
                 T.B.validate_startup_token()
 
     def test_production_default_ignores_global_fallback(self):
@@ -233,7 +237,7 @@ class Tokens(unittest.TestCase):
             self.assertFalse(T.B.bearer_authorized(headers, 'unknown'))
 
     def test_legacy_fallback_reuse_rejected(self):
-        with mock.patch.dict(T.B._SERVER, require_per_source_tokens=False), mock.patch.object(T.B, 'ALLOWED_SOURCES', {'a': {}, 'b': {}}), self.assertRaises(RuntimeError):
+        with mock.patch.dict(T.B._SERVER, require_per_source_tokens=False), mock.patch.object(T.B, 'ALLOWED_SOURCES', _source_groups({'a': {}, 'b': {}})), self.assertRaises(RuntimeError):
             T.B.validate_startup_token()
 
     def test_forced_command_curl_pinned(self):
