@@ -1,8 +1,12 @@
 # harness-bridge
 
+**Start here:** give your Grok Bot / agent the [copy-paste installation prompt](docs/agent-install-prompt.md).
+The human [INSTALL appendix](INSTALL.md) follows the same order.
+
 Run native coding-agent CLIs (**Codex CLI** and **Claude Code**) on your own machines from a cloud bot
-("dispatcher"), over a private **Tailscale** tailnet, and get the bot **woken up by a webhook push** the moment a
-job finishes - instead of keeping a polling command alive and hoping its exit wakes the bot.
+("dispatcher"), over a private **Tailscale** tailnet. Optional webhook wake is **best-effort**:
+notifications can be lost or duplicated, so every integration must retain compensating job queries.
+Python **3.11+** is required throughout; CI runs Python **3.12**.
 
 ```
                  tailnet (WireGuard, ACL-restricted)
@@ -36,14 +40,17 @@ examples/      request / response / webhook payload samples
 scripts/       scrub_check.sh (used by CI together with gitleaks)
 ```
 
-## Quick start
-1. Tailnet + ACL: [docs/tailscale-acl.md](docs/tailscale-acl.md).
-2. Dispatcher box: `export HARNESS_HOME=~/harness`, copy `dispatcher/hosts.example.env` -> `$HARNESS_HOME/hosts.env`,
-   run `dispatcher/tailscale/start-tailscaled.sh` and log in once.
-3. Mac: [docs/install-macos.md](docs/install-macos.md) (config.toml, launchd, webhook.conf).
-4. Ubuntu: [docs/install-ubuntu.md](docs/install-ubuntu.md) (SSH key, targets.json).
-5. Optional Ada tech-leader backends: add `tw-tl-codex` / `tw-tl-claudecode` placeholders from `dispatcher/targets.example.json` into your **private** `$HARNESS_HOME/targets.json` (workspace like `…/src-tech-leader`, fake IPs only in the example). Do not commit real hosts.
-6. Webhook wake: [docs/webhook-wake.md](docs/webhook-wake.md). Remember: `WEBHOOK_AUTH=Bearer <key>` exactly.
+## Install and releases
+Follow the [agent installation prompt](docs/agent-install-prompt.md) in order:
+directory layout → private targets/tokens before startup → minimal job without wake → enable wake → compensating readback.
+The [INSTALL appendix](INSTALL.md) links the platform details.
+
+Shared implementation comes from this repository; private configuration and instance state stay on each deployment.
+We recommend pinning a release commit SHA. For personal use, discover drift while dogfooding and iterate;
+no fleet-wide per-file hash ceremony is required, and a merge does not prove every running machine uses that release.
+
+`ops/push_file.sh` verifies a transfer to a Linux SSH target; it is not a deployment transaction with backups.
+It does not create `.bak` files or detect concurrent overwrites. See [deployment boundaries](docs/deploy-and-rollback.md#push_file-boundary).
 
 ## Security
 Read [SECURITY.md](SECURITY.md). Short version: the bridge binds to a tailnet IP only, every caller must be in an

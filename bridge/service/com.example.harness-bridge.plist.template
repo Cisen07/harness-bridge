@@ -7,7 +7,7 @@
   {{LABEL}}        reverse-DNS label you own, e.g. com.example.harness-bridge
   {{HOME}}         your home directory, e.g. /Users/<you>
   {{BRIDGE_DIR}}   directory holding codex_bridge.py, config.toml, webhook.conf
-  {{PYTHON}}       python3 >= 3.11 (or 3.8+ with config.json); a dedicated copy/symlink makes the
+  {{PYTHON}}       python3 >= 3.11 (CI: 3.12); a dedicated copy/symlink makes the
                    process easy to identify in Activity Monitor and in the macOS privacy prompts
   {{WORKSPACE}}    same as [workspace].path in config.toml
   Proxy variables are optional: only add them if the CLIs need an outbound HTTP proxy, and keep the

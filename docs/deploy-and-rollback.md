@@ -1,5 +1,21 @@
 # Deploy and roll back a bridge change (macOS)
 
+Recommend pinning the upstream release commit SHA and noting it in your deployment record.
+Private configuration and instance state stay outside the source checkout. For personal use,
+discover drift during dogfooding and iterate; no strict whole-fleet hash inventory is required.
+The checks below apply to a particular bridge change, not a claim of fleet-wide convergence.
+
+## push_file boundary
+
+`ops/push_file.sh` targets Linux SSH hosts with `sha256sum`: upload to a temporary file,
+verify its SHA, rename over the destination, then verify the destination SHA.
+**Verified transfer is not a deployment transaction with `.bak` backups.** Existing files are overwritten;
+there is no automatic backup, expected-old-hash check, concurrent-writer conflict detection or rollback.
+A deployment wrapper may add backup/conflict/rollback policy when needed; do not present this helper
+as a safe, complete deployment workflow or as a bidirectional Mac transport. Its backup logic is unchanged.
+
+## Mac bridge change procedure
+
 Run these on the Mac (by hand, or as a job on that Mac's own bridge). `D` = bridge directory, `L` = launchd label.
 
 1. **Baseline**: `shasum -a 256 $D/codex_bridge.py $D/agent_adapters.py $D/bridge_config.py` must equal what you

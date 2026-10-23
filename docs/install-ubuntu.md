@@ -4,6 +4,9 @@ Ubuntu hosts are driven **in SSH mode only**: nothing is installed or kept runni
 SSHes in per job and runs the native CLI. (The repository does not maintain a Linux bridge; the systemd template in
 `bridge/service/` is an unsupported experiment.)
 
+Requires Python 3.11+ on the dispatcher (CI: 3.12). Start with the
+[agent installation prompt](agent-install-prompt.md) for directory and script installation.
+
 ## On the host
 1. Tailscale installed and logged in; note its tailnet IP.
 2. An account for the agent (a dedicated one is recommended) with Codex and/or Claude Code installed and logged in,
@@ -25,12 +28,16 @@ python3 dispatcher/direct_ssh_client.py targets
 With the userspace tailscaled from `dispatcher/tailscale/` the client uses `ProxyCommand=tailscale nc`; if the box has
 a normal kernel tailnet interface set `HARNESS_SSH_PROXY=none`.
 
-## Submit
+## Submit without wake first
 ```sh
-echo '{"backend":"ubuntu-a-codex","prompt":"reply OK","model":"gpt-6.1-sol:medium",
-       "wake":{"url":"<your_endpoint>","key_env":"HARNESS_WAKE_KEY"}}' | python3 dispatcher/direct_ssh_client.py submit
+echo '{"backend":"ubuntu-a-codex","prompt":"reply OK"}' | python3 "$HARNESS_HOME/direct_ssh_client.py" submit
+"$HARNESS_HOME/bin/job_wait.sh" <job_id> --no-ledger
 ```
-Without `wake`, wait with `dispatcher/bin/job_wait.sh <job_id>`. Copy files with `ops/push_file.sh`.
+Check the real terminal status and result; the wait script exits 0 for all terminal states, including failure.
+Then configure `HARNESS_WAKE_URL_PREFIX` and the private key environment as described in
+[webhook wake](webhook-wake.md#2b-ssh-mode-wake-field), before adding `wake` to a request.
+Wake is best-effort; retain `job_wait.sh` / `status` as mandatory compensation.
+Copy files with `ops/push_file.sh` (verified transfer, no automatic backup or deployment transaction).
 
 ## Optional: Claude model switch helper
 If the host selects Claude models through a helper script, set `switch_helper` in the target. The helper must print
