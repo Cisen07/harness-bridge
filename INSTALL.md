@@ -14,11 +14,13 @@ Use this appendix when installing manually; follow the same order.
 3. **Start and verify without wake:** follow [Mac](docs/install-macos.md) or
    [Linux SSH](docs/install-ubuntu.md). Start only after private files are provisioned. Submit
    a tiny task, retain its job_id, then use authenticated GET / wait / status to verify completed + result.
-4. **Optional wake:** if selected in the prerequisite questions, provision private routine settings using [webhook wake](docs/webhook-wake.md),
+4. **Wake (recommended default):** after the prerequisite choice and first successful readback, provision private routine settings using [webhook wake](docs/webhook-wake.md),
    then test receipt **and** real-result readback via the [receiver reference](examples/wake-readback.md).
-   Otherwise leave wake deferred and continue to compensation.
-5. **Compensate:** periodically reconcile submitted job_ids even without notifications. Verify this
-   path with a no-wake task. Do not resubmit uncertain jobs; inspect SSH worker loss/remote timeouts.
+   Wake is the primary experience path; defer only when the webhook URL or key is unavailable,
+   mark wake not installed as a degraded experience, and continue to mandatory compensation validation.
+5. **Compensate:** retain polling and periodic reconciliation of submitted job_ids as mandatory fallbacks,
+   not the routine primary path. Verify this path with a no-wake task, including when wake is deferred.
+   Do not resubmit uncertain jobs; inspect SSH worker loss/remote timeouts.
 6. **Record evidence:** chosen source SHA, actual OS/Python/CLI versions, tests and per-transport
    smoke results. Pinning a release SHA is recommended; discover personal deployment drift and iterate.
 
