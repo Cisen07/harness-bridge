@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Usage: push_file.sh <local file> <backend-from-targets.json> <remote absolute path>
 # Copies a file verbatim to an SSH-mode host with the same SSH settings as direct_ssh_client.py
-# (dedicated key, strict known_hosts, optional tailscale nc proxy), writing to a temp file and mv-ing it
-# into place, then verifies the remote sha256. Prints no secrets.
+# (dedicated key, strict known_hosts, optional tailscale nc proxy), writing to a temp file,
+# verifying the remote temp sha256 BEFORE mv, then mv-ing into place. Prints no secrets.
 set -euo pipefail
 D="$(cd "$(dirname "$0")/../dispatcher/bin" && pwd)"; . "$D/_env.sh"
 [ $# -eq 3 ] || { echo "usage: $0 <local file> <backend> <remote path>" >&2; exit 2; }
@@ -31,9 +31,18 @@ SSH=(ssh -T -i "$key"
   SSH+=(-o "ProxyCommand=$(q "$HARNESS_HOME/bin/tailscale") --socket=$(q "$HARNESS_HOME/run/tailscaled.sock") nc %h %p")
 SSH+=(-- "$user@$host")
 local_sha=$(sha256sum -- "$src" | cut -d' ' -f1)
-"${SSH[@]}" "mkdir -p -- $rdir && cat > $rtmp && mv -f -- $rtmp $rdst" < "$src"
-remote_sha=$("${SSH[@]}" "sha256sum -- $rdst" | cut -d' ' -f1)
+# Write to remote temp only; verify BEFORE mv so a bad payload never replaces the target.
+"${SSH[@]}" "mkdir -p -- $rdir && cat > $rtmp" < "$src"
+remote_tmp_sha=$("${SSH[@]}" "sha256sum -- $rtmp" | cut -d' ' -f1)
 echo "local  sha256: $local_sha"
-echo "remote sha256: $remote_sha"
+echo "remote temp sha256: $remote_tmp_sha"
+if [ "$local_sha" != "$remote_tmp_sha" ]; then
+  "${SSH[@]}" "rm -f -- $rtmp" || true
+  echo "MISMATCH (temp; target untouched)" >&2
+  exit 1
+fi
+"${SSH[@]}" "mv -f -- $rtmp $rdst"
+remote_sha=$("${SSH[@]}" "sha256sum -- $rdst" | cut -d' ' -f1)
 echo "remote path:   $target:$dst"
-if [ "$local_sha" = "$remote_sha" ]; then echo "MATCH"; else echo "MISMATCH" >&2; exit 1; fi
+echo "remote final sha256: $remote_sha"
+if [ "$local_sha" = "$remote_sha" ]; then echo "MATCH"; else echo "MISMATCH (after mv)" >&2; exit 1; fi
