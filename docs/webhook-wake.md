@@ -3,6 +3,11 @@
 Goal: the bot ends its turn right after submitting a job and is woken by an HTTP push when the job reaches a
 terminal state. Then it reads the real result from the job API. The push itself carries no output.
 
+Wake is **best-effort**, may be lost or duplicated, and must have a compensating query path.
+Mac daemon-thread sends have no durable outbox; SSH workers retry finitely and cannot recover after worker loss.
+Persist submitted job_ids and reconcile outstanding jobs periodically, even when no notification arrives.
+See [receive-then-read reference](../examples/wake-readback.md) for the shared wake/reconciliation procedure.
+
 ## 1. Create the routine (once per machine bot)
 Create a routine with a **webhook trigger** in your bot platform. Its panel shows a URL and a send key; only the
 user copies them. The bot never needs to see the key.
@@ -55,7 +60,10 @@ Mac CLI jobs run in a new process group; on timeout the bridge kills that group.
 that explicitly escape the group are outside this guarantee. SSH timeouts only stop the local
 transport; they do not guarantee remote processes have stopped. Inspect the remote host before retrying.
 
-## Receiver idempotency
+## Receiver idempotency (integrator responsibility)
+The public examples do not implement concurrent exactly-once ledger accounting or receiver locking;
+`_job_summary.py` has a read-then-append race. The following is guidance for integrators requiring those guarantees.
+
 Treat webhook delivery as potentially duplicated: the receiver must deduplicate
 by `job_id` (namespace by trusted host/backend if multiple independent producers
 share a receiver). Persist an atomic unique record before scheduling downstream

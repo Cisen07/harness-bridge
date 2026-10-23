@@ -404,6 +404,35 @@ def worker(job_id):
         write(path, job)
 
 
+def submit_job(req, job):
+    """Serialize admission across local submitters sharing STATE (not remote CLI execution)."""
+    with (STATE / '.submit.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        session = req.get('session_id')
+        if session:
+            for path in STATE.glob('*.json'):
+                try:
+                    uuid.UUID(path.stem)  # skip model caches and session-model tables
+                except ValueError:
+                    continue
+                active = json.loads(path.read_text())
+                if active.get('backend') != job['backend'] or active.get('status') not in ('queued', 'running'):
+                    continue
+                previous = active.get('session_id')
+                if previous is None:
+                    # Jobs queued by older releases kept the requested session only here.
+                    previous = json.loads(path.with_suffix('.request').read_text()).get('session_id')
+                if previous == session:
+                    raise SystemExit('409 Conflict: This session_id already has a queued or running job; '
+                                     'concurrent resumes are not allowed')
+        job['session_id'] = session
+        write(STATE / (job['job_id'] + '.request'), req)
+        write(job_path(job['job_id']), job)
+        subprocess.Popen([sys.executable, str(pathlib.Path(__file__).resolve()), '_worker', job['job_id']],
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+
+
 def main():
     os.umask(0o077)
     STATE.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -479,11 +508,7 @@ def main():
         job_id = str(uuid.uuid4())
         job = dict(job_id=job_id, backend=backend, workspace=TARGETS[backend][2],
                    transport='direct-tailscale-ssh', status='queued', created_at=time.time(), model=model, **extra)
-        write(STATE / (job_id + '.request'), req)
-        write(job_path(job_id), job)
-        subprocess.Popen([sys.executable, str(pathlib.Path(__file__).resolve()), '_worker', job_id],
-                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                         start_new_session=True)
+        submit_job(req, job)
         print(json.dumps(job))
     elif sys.argv[1] == 'status':
         print(job_path(sys.argv[2]).read_text())

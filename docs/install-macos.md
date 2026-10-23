@@ -1,6 +1,6 @@
 # Install on macOS (HTTP bridge mode)
 
-Prerequisites: Tailscale app (logged in, the Mac has a tailnet IP), Python 3.11+ (or 3.8+ with `config.json`),
+Prerequisites: Tailscale app (logged in, the Mac has a tailnet IP), Python 3.11+ (CI: 3.12),
 Codex CLI and/or Claude Code installed and logged in for your user.
 
 ## 1. Files
@@ -20,8 +20,23 @@ Edit `config.toml`:
 
 ## 2. Test locally
 ```sh
-cd bridge && python3 -B -m unittest discover -s tests -v
+(cd bridge && python3 -B -m unittest discover -s tests -v)
 ```
+
+## Required API token — provision before launchd
+
+Before starting, provision a distinct random token for every allowed source (see SECURITY.md), provision it separately on the Mac
+and dispatcher using `bridge/bridge.token.example` and `dispatcher/bridge.token.example` as format examples,
+and chmod both files 600. Set each source's absolute `token_files` paths on the bridge (default
+`server.require_per_source_tokens = true`, required in production);
+export `HARNESS_BRIDGE_TOKEN_FILE` on the dispatcher. The dispatcher defaults to `$HARNESS_HOME/bridge.token`.
+The global bridge token is only a fallback when `require_per_source_tokens = false`. Missing or invalid credentials refuse startup (including non-0600 permissions); provision them before upgrading.
+The file is also checked on every request so unsafe rotation fails closed.
+Use the header helper in step 4 without exposing the token in argv. Do not add Origin or Sec-Fetch-Site headers;
+Host must be the configured bind_host:port. Keep `_bridge_auth.py` alongside installed dispatcher bin scripts
+(see [agent layout](agent-install-prompt.md#1-source-and-directory-layout)).
+The userspace tailscaled default is 1.104.2; follow official Tailscale security bulletins and update it promptly.
+Leave webhook.conf absent in the fresh runtime until step 5; do not change an existing production runtime.
 
 ## 3. launchd
 Fill in `bridge/service/com.example.harness-bridge.plist.template` (label, home, bridge dir, python, workspace),
@@ -35,44 +50,33 @@ makes this prompt easy to recognize.
 
 If the log shows `Cannot start ...` and launchd keeps relaunching the job (about every 10s under `KeepAlive`), fix the token file first: it must exist, be non-empty, and be mode 0600. The bridge refuses to start on a missing or invalid token and exits before listening, so the restart loop continues until the token file is corrected.
 
-## 4. Webhook
+## 4. Verify without wake from the dispatcher
+Run in Bash after startup. This example uses a direct kernel tailnet route; for a userspace dispatcher
+use `--proxy socks5h://127.0.0.1:10555 --noproxy ''` in place of `--noproxy '*'`.
+
+```bash
+set +x
+AUTH_HEADER=$(python3 "$HARNESS_HOME/bin/_bridge_auth.py") || exit 1
+curl -q --fail --noproxy '*' -H @/dev/fd/3 \
+  http://<mac-ip>:18542/health 3< <(printf '%s\n' "$AUTH_HEADER")
+curl -q --fail --noproxy '*' -H @/dev/fd/3 -H 'Content-Type: application/json' \
+  --data-binary '{"backend":"mac-codex","prompt":"reply OK"}' \
+  http://<mac-ip>:18542/jobs 3< <(printf '%s\n' "$AUTH_HEADER")
+unset AUTH_HEADER
+# Use the returned job_id (the installed wait script uses the configured SOCKS route):
+"$HARNESS_HOME/bin/mac_wait.sh" <mac-ip>:18542 <job_id> \
+  "$HARNESS_HOME/results/first-mac-job.json" --no-ledger
+```
+First complete a job with wake disabled and read it with `GET /jobs/<id>` / `mac_wait.sh --no-ledger`.
+Only then configure wake; always retain compensating queries for missing notifications.
+
+## 5. Optional webhook after successful readback
 `cp bridge/webhook.conf.example "$BRIDGE_DIR/webhook.conf" && chmod 600 "$BRIDGE_DIR/webhook.conf"`, then fill in the
 routine URL and `Bearer <key>` (see webhook-wake.md).
 
-## 5. Verify from the dispatcher
-```sh
-curl -q --noproxy '*' -H @/dev/fd/3 3< <(printf '%s\n' "$AUTH_HEADER") http://<mac-ip>:18542/health
-curl -q --noproxy '*' -H @/dev/fd/3 3< <(printf '%s\n' "$AUTH_HEADER") ... -X POST -H 'Content-Type: application/json' -d '{"backend":"mac-codex","prompt":"reply OK"}' http://<mac-ip>:18542/jobs
-```
-Then wait for the push and `GET /jobs/<id>`.
 
 ## Upgrades
 Follow deploy-and-rollback.md (sha check, `cp -p` backup, py_compile, detached restart, smoke test).
-
-## Required API token
-
-Before starting, provision a distinct random token for every allowed source (see SECURITY.md), provision it separately on the Mac
-and dispatcher using `bridge/bridge.token.example` and `dispatcher/bridge.token.example` as format examples,
-and chmod both files 600. Set each source's absolute `token_files` paths on the bridge (default
-`server.require_per_source_tokens = true`, required in production);
-export `HARNESS_BRIDGE_TOKEN_FILE` on the dispatcher. The dispatcher defaults to `$HARNESS_HOME/bridge.token`.
-The global bridge token is only a fallback when `require_per_source_tokens = false`. Missing or invalid credentials refuse startup (including non-0600 permissions); provision them before upgrading.
-The file is also checked on every request so unsafe rotation fails closed.
-For manual curl, use the repository's header helper without exposing the token in argv:
-
-```bash
-AUTH_HEADER=$(python3 dispatcher/bin/_bridge_auth.py) || exit 1
-curl -q --noproxy '*' -H @/dev/fd/3 3< <(printf '%s\n' "$AUTH_HEADER") http://<mac-ip>:18542/health
-# Add -H 'Content-Type: application/json' and --data-binary @request.json for POST /jobs.
-unset AUTH_HEADER
-```
-
-Apply the same header to the earlier smoke-test commands. Do not add Origin or Sec-Fetch-Site headers;
-Host must be the configured bind_host:port. Keep `_bridge_auth.py` alongside installed dispatcher bin scripts.
-The userspace tailscaled default is 1.104.2; follow official Tailscale security bulletins and update it promptly.
-
-For the smoke curl commands above, first obtain a non-exported `AUTH_HEADER` using
-the header helper shown in Required API token, then unset it after use.
 
 ## Preflight self-source (staging only)
 
@@ -122,7 +126,7 @@ DNS resolution). The empty `--noproxy` explicitly overrides bypass settings:
 
 ```bash
 AUTH_HEADER=$(python3 dispatcher/bin/_bridge_auth.py) || exit 1
-curl -q --noproxy '' --proxy socks5h://127.0.0.1:1080 \
+curl -q --noproxy '' --proxy socks5h://127.0.0.1:10555 \
   -H @/dev/fd/3 3< <(printf '%s\n' "$AUTH_HEADER") http://<mac-ip>:18542/health
 unset AUTH_HEADER
 ```
