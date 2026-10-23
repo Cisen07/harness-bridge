@@ -18,6 +18,10 @@ import bridge_config as C
 from test_patch1 import cutover
 
 
+def _source_groups(rules):
+    return {ip: [dict(rule, name=ip)] for ip, rule in rules.items()}
+
+
 class Confirmation(unittest.TestCase):
     def flow(self, style, complete=True):
         with tempfile.TemporaryDirectory() as folder:
@@ -166,7 +170,7 @@ class OptionalFixes(unittest.TestCase):
         lock.__exit__.side_effect = T.B.COUNTER_LOCK.__exit__
         with mock.patch.object(T.B, 'COUNTER_LOCK', lock), \
              mock.patch.object(T.B, 'read_bearer_token', side_effect=read), \
-             mock.patch.object(T.B, 'ALLOWED_SOURCES', {'a': {'token_files': ['current', 'next']}}):
+             mock.patch.object(T.B, 'ALLOWED_SOURCES', _source_groups({'a': {'token_files': ['current', 'next']}})):
             with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
                 self.assertTrue(all(pool.map(lambda _: T.B.bearer_authorized(headers, 'a'), range(200))))
         self.assertEqual(T.B.INVALID_NEXT_SLOTS - before, 200)

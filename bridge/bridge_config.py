@@ -124,9 +124,14 @@ def load():
     codex['home'] = codex['home'] or os.environ.get('CODEX_HOME', str(HOME / '.codex'))
     rules = {}
     used_token_paths = set()
+    used_names = set()
     for entry in cfg['access']['allowed_sources']:
         if not isinstance(entry, dict) or 'ip' not in entry:
             raise ValueError('access.allowed_sources entries need an "ip"')
+        name = entry.get('name', str(entry['ip']))
+        if not isinstance(name, str) or not name.strip() or name in used_names:
+            raise ValueError('source names must be nonempty and unique')
+        used_names.add(name)
         rule = {k: entry[k] for k in ('tag', 'node') if entry.get(k)}
         if len(rule) != 1:
             raise ValueError('each allowed source needs exactly one of "tag" or "node"')
@@ -142,9 +147,8 @@ def load():
             rule['token_files'] = slots
         elif server['require_per_source_tokens']:
             raise ValueError('each allowed source requires token_files')
-        if str(entry['ip']) in rules:
-            raise ValueError('duplicate source IP')
-        rules[str(entry['ip'])] = rule
+        rule['name'] = name
+        rules.setdefault(str(entry['ip']), []).append(rule)
     cfg['access']['rules'] = rules
     return cfg
 

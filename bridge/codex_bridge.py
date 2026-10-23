@@ -36,7 +36,7 @@ HOST_LABEL = _SERVER['host_label']
 JOB_TIMEOUT = int(_SERVER['job_timeout_seconds'])
 MAX_BODY = int(_SERVER['max_body_bytes'])
 WEBHOOK_CONF = pathlib.Path(_SERVER['webhook_conf'])
-# Allowed callers: tailnet source IP -> requirement checked against `tailscale whois`.
+# Allowed callers: tailnet source IP -> named rules checked against `tailscale whois`.
 # 'tag': node must carry this ACL tag; 'node': node's MagicDNS name must match (trailing dot ignored).
 # Loaded from config.toml [access].allowed_sources; empty means every request gets 403.
 ALLOWED_SOURCES = CONFIG['access']['rules']
@@ -127,7 +127,7 @@ def validate_startup_token():
     if _SERVER.get('require_token', True):
         try:
             seen_paths, seen_tokens = set(), []
-            rules = list(ALLOWED_SOURCES.values())
+            rules = [rule for group in ALLOWED_SOURCES.values() for rule in group]
             for rule in rules:
                 for index, path in enumerate(token_slots(rule)):
                     try:
@@ -150,11 +150,13 @@ def validate_startup_token():
             ) from None
 
 
-def bearer_authorized(headers, address=None):
+def bearer_authorized(headers, address=None, rule=None):
     if not _SERVER.get('require_token', True):
         return True
     global INVALID_NEXT_SLOTS
-    rule = ALLOWED_SOURCES.get(address, {})
+    if rule is None:
+        return any(bearer_authorized(headers, address, item)
+                   for item in ALLOWED_SOURCES.get(address, []))
     try:
         slots = token_slots(rule)
     except ValueError:
@@ -231,12 +233,12 @@ def notify_terminal(job):
         print(f'Terminal webhook dispatch failed ({type(error).__name__})', flush=True)
 
 
-def authorized(address):
+def authorized(address, rule=None):
     try:
         ipaddress.ip_address(address)
-        rule = ALLOWED_SOURCES.get(address)
-        if not rule:
-            return False
+        if rule is None:
+            return any(authorized(address, item)
+                       for item in ALLOWED_SOURCES.get(address, []))
         p = subprocess.run([TAILSCALE, 'whois', '--json', address], capture_output=True,
                            text=True, timeout=5, check=True)
         node = json.loads(p.stdout)['Node']
@@ -355,6 +357,15 @@ def resolve_session_selection(session, backend, model, effort):
     return out
 
 
+def authenticated_source(headers, address):
+    matched = []
+    for rule in ALLOWED_SOURCES.get(address, []):
+        if bearer_authorized(headers, address, rule) and authorized(address, rule):
+            matched.append(rule['name'])
+    # Reject ambiguous identity, including duplicate credentials introduced at runtime.
+    return matched[0] if len(matched) == 1 else None
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     timeout = 30
 
@@ -371,7 +382,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        if not authorized(self.client_address[0]) or not bearer_authorized(self.headers, self.client_address[0]):
+        self.source_name = authenticated_source(self.headers, self.client_address[0])
+        if self.source_name is None:
             return self.reply(403, {'error': 'Requires an allowed Tailscale source and valid API credential'})
         if self.path == '/health':
             return self.reply(200, {'ok': True, 'backend': 'Mac Codex / Claude Code CLI',
@@ -400,7 +412,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return self.reply(404, {'error': 'Unknown route'})
 
     def do_POST(self):
-        if not authorized(self.client_address[0]) or not bearer_authorized(self.headers, self.client_address[0]):
+        self.source_name = authenticated_source(self.headers, self.client_address[0])
+        if self.source_name is None:
             return self.reply(403, {'error': 'Requires an allowed Tailscale source and valid API credential'})
         if self.path != '/jobs':
             return self.reply(404, {'error': 'Unknown route'})
@@ -441,6 +454,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     return self.reply(409, {'error': 'This session_id already has a queued or running job; concurrent resumes are not allowed'})
                 job_id = str(uuid.uuid4())
                 record = {'job_id': job_id, 'status': 'queued', 'session_id': session,
+                          'source': self.source_name,
                           'workspace': BACKENDS[backend]['workspace'], 'backend': backend,
                           'created_at': datetime.datetime.now(datetime.timezone.utc).isoformat()}
                 record.update(resolve_session_selection(session, backend, model, effort))
@@ -466,5 +480,5 @@ if __name__ == '__main__':
         save()
         for job in INTERRUPTED_JOBS:
             notify_terminal(job)
-    print(f'harness-bridge listening on {HOST}:{PORT} ({len(ALLOWED_SOURCES)} allowed sources); workspace={WORKSPACE}; {codex_mode_summary()}', flush=True)
+    print(f'harness-bridge listening on {HOST}:{PORT} ({sum(map(len, ALLOWED_SOURCES.values()))} allowed sources); workspace={WORKSPACE}; {codex_mode_summary()}', flush=True)
     http.server.ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()

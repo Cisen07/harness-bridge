@@ -22,6 +22,10 @@ cutover = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cutover)
 
 
+def _source_groups(rules):
+    return {ip: [dict(rule, name=ip)] for ip, rule in rules.items()}
+
+
 class Patch1(unittest.TestCase):
     def test_bind_validation(self):
         for host, opt, valid in [('0.0.0.0', True, False), ('::', True, False),
@@ -51,7 +55,7 @@ class Patch1(unittest.TestCase):
                 headers = email.message.Message()
                 headers['Authorization'] = 'Bearer ' + value
                 return T.B.bearer_authorized(headers, source)
-            with mock.patch.object(T.B, 'ALLOWED_SOURCES', rules):
+            with mock.patch.object(T.B, 'ALLOWED_SOURCES', _source_groups(rules)):
                 T.B.validate_startup_token()
                 for value in ('source-a', 'next-a'):
                     self.assertTrue(auth(value, '192.0.2.1'))
