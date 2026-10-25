@@ -218,18 +218,18 @@ class ShadowSubmitWiring(unittest.TestCase):
         key.write_text('not-a-real-key\n')
         targets = {
             'ubuntu-a-codex': {
-                'host': '100.64.0.1',
+                'host': 'host-a.example.invalid',
                 'user': 'tester',
-                'workspace': '/home/tester/src',
-                'entry': '/home/tester/.local/bin/codex',
+                'workspace': '/opt/example/src',
+                'entry': '/opt/example/bin/codex',
                 'engine': 'codex',
                 'ssh_key': 'ssh/id_ed25519_ubuntu-a',
             },
             'tw-tl-codex': {
-                'host': '100.64.0.1',
+                'host': 'host-b.example.invalid',
                 'user': 'tester',
-                'workspace': '/home/tester/go/src-tech-leader',
-                'entry': '/home/tester/.local/bin/codex',
+                'workspace': '/opt/example/go/src-tech-leader',
+                'entry': '/opt/example/bin/codex',
                 'engine': 'codex',
                 'ssh_key': 'ssh/id_ed25519_ubuntu-a',
             },
