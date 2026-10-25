@@ -481,6 +481,102 @@ class ShadowSubmitWiring(unittest.TestCase):
         self.assertEqual(req.get('prompt'), 'ping')
         self.assertEqual(job.get('model'), 'gpt-6.1-sol')
 
+    def test_shadow_refresh_preserves_worker_terminal_state(self):
+        """B4: worker completed before shadow disk refresh must not be clobbered.
+
+        Isolation steps (Ada race-proof):
+        1. worker_finished_before_shadow → status=completed + result
+        2. after_shadow_refresh → still completed/result (not queued/null)
+        3. next_resume_admission → same session_id must not 409 on fake queued
+        """
+        import io
+        import sys
+        import uuid
+
+        mod = self._load_client()
+        session_id = str(uuid.uuid4())
+        order = []
+        captured = {}
+
+        def fake_submit(request, job):
+            order.append('admit')
+            job['session_id'] = request.get('session_id')
+            captured['job_id'] = job['job_id']
+            mod.write(mod.STATE / (job['job_id'] + '.request'), request)
+            mod.write(mod.job_path(job['job_id']), job)
+
+        real_record = mod.record_shadow
+
+        def tracking_record(job, req, **kwargs):
+            order.append('shadow')
+            out = real_record(job, req, **kwargs)
+            # Simulate worker finishing after admit, before shadow disk merge.
+            path = mod.job_path(job['job_id'])
+            on_disk = json.loads(path.read_text())
+            on_disk.update(
+                status='completed',
+                result='offline-ok',
+                exit_code=0,
+                session_id=session_id,
+            )
+            mod.write(path, on_disk)
+            order.append('worker_finished_before_shadow')
+            disk = json.loads(path.read_text())
+            self.assertEqual(disk['status'], 'completed')
+            self.assertEqual(disk['result'], 'offline-ok')
+            return out
+
+        req = {
+            'backend': 'ubuntu-a-codex',
+            'prompt': 'ping',
+            'model': 'gpt-6.1-sol',
+            'effort': 'medium',
+            'session_id': session_id,
+        }
+        buf = io.StringIO(json.dumps(req))
+        with mock.patch.dict(os.environ, self.env, clear=False), \
+                mock.patch.object(sys, 'stdin', buf), \
+                mock.patch.object(sys, 'argv', ['direct_ssh_client.py', 'submit']), \
+                mock.patch.object(mod, 'submit_job', side_effect=fake_submit), \
+                mock.patch.object(mod, 'record_shadow', side_effect=tracking_record), \
+                mock.patch('sys.stdout', new_callable=io.StringIO) as out:
+            mod.main()
+            printed = json.loads(out.getvalue())
+
+        self.assertEqual(order, ['admit', 'shadow', 'worker_finished_before_shadow'])
+        self.assertIn('shadow', printed)
+
+        # after_shadow_refresh: disk must keep terminal status/result + shadow
+        path = mod.job_path(captured['job_id'])
+        after = json.loads(path.read_text())
+        self.assertEqual(after['status'], 'completed', msg=after)
+        self.assertEqual(after['result'], 'offline-ok', msg=after)
+        self.assertNotEqual(after['status'], 'queued')
+        self.assertIsNotNone(after.get('result'))
+        self.assertIn('shadow', after)
+        self.assertEqual(after['shadow'].get('mode'), 'shadow')
+
+        # next_resume_admission: completed must not look like active queued/running
+        next_job = dict(
+            job_id=str(uuid.uuid4()),
+            backend='ubuntu-a-codex',
+            workspace='/opt/example/src',
+            transport='direct-tailscale-ssh',
+            status='queued',
+            created_at=time.time(),
+            model='gpt-6.1-sol',
+        )
+        next_req = {
+            'backend': 'ubuntu-a-codex',
+            'prompt': 'resume',
+            'session_id': session_id,
+        }
+        with mock.patch.object(mod.subprocess, 'Popen') as popen:
+            mod.submit_job(next_req, next_job)
+            popen.assert_called_once()
+        self.assertEqual(next_job['session_id'], session_id)
+        self.assertTrue(mod.job_path(next_job['job_id']).exists())
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -437,6 +437,28 @@ def record_shadow(job, req, *, engine, named_model, named_effort, bot=None):
         job['shadow'] = {'mode': 'shadow', 'error': str(exc)[:300], 'job_id': job.get('job_id')}
 
 
+def persist_shadow(job_id, shadow):
+    """Merge shadow onto the on-disk job without clobbering worker fields.
+
+    Reads the current job file under a per-job flock, writes only the ``shadow``
+    key, and preserves status/result/error/wake/session and every other field.
+    Best-effort: any failure discards the shadow refresh and leaves the queued
+    (or already-terminal) job untouched. Never rewrites from an in-memory
+    queued snapshot.
+    """
+    path = job_path(job_id)
+    lock_path = STATE / (str(uuid.UUID(job_id)) + '.lock')
+    try:
+        with lock_path.open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            on_disk = json.loads(path.read_text())
+            on_disk['shadow'] = shadow
+            write(path, on_disk)
+            return on_disk
+    except Exception:  # noqa: BLE001 — shadow refresh must not affect submit
+        return None
+
+
 def submit_job(req, job):
     """Serialize admission across local submitters sharing STATE (not remote CLI execution)."""
     with (STATE / '.submit.lock').open('a') as lock:
@@ -556,10 +578,8 @@ def main():
         record_shadow(job, shadow_req, engine=TARGETS[backend][4],
                       named_model=named_model, named_effort=named_effort, bot=shadow_bot)
         if job.get('shadow') is not None:
-            try:
-                write(job_path(job['job_id']), job)
-            except Exception:  # noqa: BLE001 — ledger/job refresh is best-effort
-                pass
+            # Merge shadow onto disk only; never overwrite worker status/result.
+            persist_shadow(job['job_id'], job['shadow'])
         print(json.dumps(job))
     elif sys.argv[1] == 'status':
         print(job_path(sys.argv[2]).read_text())
