@@ -43,5 +43,14 @@
     "ssh_key": "ssh/id_ed25519_ubuntu-a",
     "switch_helper": "/home/<remote-user>/tools/model-switch/run.sh",
     "_comment": "Ada tech-leader Claude Code only; same dedicated workspace as tw-tl-codex."
+  },
+  "tw-cursor": {
+    "host": "100.x.y.3",
+    "user": "<remote-user>",
+    "workspace": "/home/<remote-user>/go/src",
+    "entry": "/home/<remote-user>/.local/bin/agent",
+    "engine": "cursor",
+    "ssh_key": "ssh/id_ed25519_ubuntu-a",
+    "_comment": "Cursor Agent CLI; model goes directly to --model; no switch_helper. Replace placeholders in private targets.json."
   }
 }

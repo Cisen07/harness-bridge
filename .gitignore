@@ -67,3 +67,7 @@ ops/compat/aliases.json
 wake/routing.json
 wake/*.url
 wake-closeout.json
+
+# Private wake registry and legacy URL fallback files
+wake/registry.json
+wake/*_webhook_url

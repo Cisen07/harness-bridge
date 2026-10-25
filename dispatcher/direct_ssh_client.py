@@ -1,4 +1,4 @@
-"""SSH-mode dispatcher: run native agent CLIs (Codex / Claude Code) on Linux hosts over Tailscale + OpenSSH.
+"""SSH-mode dispatcher: run native agent CLIs (Codex / Claude Code / Cursor) on Linux hosts over Tailscale + OpenSSH.
 
 Runs on the dispatcher box. No daemon is needed on the target host: each job is a detached local
 worker process that SSHes in, runs the CLI in a login zsh, parses the output and writes
@@ -43,7 +43,7 @@ def load_targets(path=TARGETS_FILE):
         if name.startswith('_'):
             continue  # comments
         missing = [f for f in TARGET_FIELDS[:6] if not t.get(f)]
-        if missing or t['engine'] not in ('codex', 'claude') or not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,40}', name):
+        if missing or t['engine'] not in ('codex', 'claude', 'cursor') or not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,40}', name):
             raise ValueError('Invalid target %r (missing %s)' % (name, ', '.join(missing) or 'valid engine/name'))
         key = pathlib.Path(os.path.expanduser(t['ssh_key']))
         key = key if key.is_absolute() else BASE / key
@@ -109,6 +109,15 @@ def command(backend, session=None, model=None, effort=None):
         flags = codex_flags(model, effort)
         args += ['resume'] + flags + [session, '-'] if session else flags + ['-']
         model = None  # the switch-helper export below is for claude only
+    elif engine == 'cursor':
+        # Headless Cursor: force writes, trust the workspace, and disable the sandbox (trusted account).
+        # Prompt arrives on stdin (same as Claude). --output-format json yields one result object with session_id.
+        args = [entry, '-p', '--output-format', 'json', '--force', '--trust', '--sandbox', 'disabled']
+        if session:
+            args += ['--resume', session]
+        if model:
+            args += ['--model', model]
+        model = None  # never use ai-switch for cursor
     else:
         args = [entry, '-p', '--verbose', '--output-format', 'stream-json', '--permission-mode', 'acceptEdits']
         if session:
@@ -252,7 +261,7 @@ def parse(engine, text):
                 if (not isinstance(e.get('session_id'), str) or not e['session_id']
                         or not isinstance(e.get('result', ''), str)
                         or not isinstance(e.get('permission_denials', []), list)):
-                    raise ValueError('Invalid Claude result fields')
+                    raise ValueError('Invalid %s result fields' % engine)
                 terminal = True
                 result = [e.get('result', '')]
                 failed = bool(e.get('is_error')) or e.get('subtype', 'success') != 'success'
@@ -442,7 +451,7 @@ def main():
         raise SystemExit('No targets configured: create %s (see targets.example.json)' % TARGETS_FILE)
     if sys.argv[1] == 'targets':
         info = {k: dict(host=v[0], account=v[1], workspace=v[2], engine=v[4], transport='direct-tailscale-ssh',
-                        supports_model=v[6] is not None or v[4] == 'codex')
+                        supports_model=v[6] is not None or v[4] in ('codex', 'cursor'))
                 for k, v in TARGETS.items()}
         for k, v in TARGETS.items():
             if v[4] == 'codex':
@@ -501,7 +510,7 @@ def main():
                 req.pop('model', None)
                 model = None
             else:
-                if TARGETS[backend][6] is None:
+                if TARGETS[backend][6] is None and TARGETS[backend][4] != 'cursor':
                     raise ValueError('Backend does not support model selection')
                 if not isinstance(model, str) or not MODEL_RE.match(model) or model != model.strip():
                     raise ValueError('Invalid model')

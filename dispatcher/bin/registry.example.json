@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "rule": "Each bot MUST use only its own url_env+key_env. Generic WEBHOOK_URL/WEBHOOK_AUTH are MBP's legacy names — do not use from other bots. Prefer MBP_WAKE_URL/MBP_WAKE_KEY aliases once created.",
+  "bots": {
+    "Ada": {
+      "owner_bot": "Ada",
+      "url_env": "ADA_WAKE_URL",
+      "key_env": "ADA_WAKE_KEY",
+      "url_file": "wake/ada_webhook_url",
+      "backends": [
+        "tw-tl-codex",
+        "tw-tl-claudecode"
+      ]
+    },
+    "TW Grok Bot": {
+      "owner_bot": "TW Grok Bot",
+      "url_env": "TW_WAKE_URL",
+      "key_env": "TW_WAKE_KEY",
+      "url_file": "wake/tw_webhook_url",
+      "backends": [
+        "tw-codex",
+        "tw-claudecode",
+        "tw-cursor"
+      ]
+    },
+    "TF Grok Bot": {
+      "owner_bot": "TF Grok Bot",
+      "url_env": "TF_WAKE_URL",
+      "key_env": "TF_WAKE_KEY",
+      "url_file": null,
+      "backends": [
+        "tf-codex",
+        "tf-claudecode"
+      ]
+    },
+    "Air Grok Bot": {
+      "owner_bot": "Air Grok Bot",
+      "url_env": "AIR_WEBHOOK_URL",
+      "key_env": "AIR_WEBHOOK_KEY",
+      "url_file": null,
+      "backends": [
+        "mac-codex",
+        "mac-claudecode"
+      ],
+      "note": "Mac HTTP bridge path; keep names for now or alias AIR_WAKE_* later"
+    },
+    "MBP Grok Bot": {
+      "owner_bot": "MBP Grok Bot",
+      "url_env": "MBP_WAKE_URL",
+      "key_env": "MBP_WAKE_KEY",
+      "legacy_env": {
+        "url": "WEBHOOK_URL"
+      },
+      "url_file": null,
+      "backends": [
+        "mac-codex",
+        "mac-claudecode"
+      ],
+      "note": "Legacy URL fallback is MBP-only. Set MBP_WAKE_KEY to the bare key in the dispatcher environment; WEBHOOK_AUTH is not a key alias."
+    }
+  },
+  "forbidden_cross_use": [
+    "No bot may pass another bot's url_env/key_env as wake.",
+    "Ada/TW/TF/Air must never set wake.url from WEBHOOK_URL."
+  ]
+}
