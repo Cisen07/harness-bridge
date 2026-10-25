@@ -10,9 +10,13 @@ Configuration (nothing host-specific is hard-coded):
   HARNESS_SSH_PROXY       "tailscale-nc" (default: userspace tailscaled via `tailscale nc`) or "none"
   HARNESS_WAKE_URL_PREFIX required for wake; exact HTTPS origin and optional path boundary
   HARNESS_WAKE_KEY_ENV    permitted key environment variable (default HARNESS_WAKE_KEY)
+  HARNESS_SHADOW_POLICY   optional shadow policy JSON (default: bundled example or $HARNESS_HOME/shadow_policy.json)
+  HARNESS_SHADOW_LEDGER   optional JSONL ledger path (default: $HARNESS_HOME/shadow/ledger.jsonl)
+  HARNESS_SHADOW_BOT      optional bot identity for shadow Ada / conflict recording
 Usage: targets | submit (JSON on stdin) | status JOB_ID
 """
 import fcntl
+import importlib.util
 import json
 import os
 import re
@@ -413,6 +417,21 @@ def worker(job_id):
         write(path, job)
 
 
+def record_shadow(job, req, *, engine, named_model, named_effort, bot=None):
+    """Attach P1 shadow suggestion to the job. Failures never affect submit."""
+    try:
+        path = pathlib.Path(__file__).resolve().with_name('shadow_route.py')
+        spec = importlib.util.spec_from_file_location('_harness_shadow_route', path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        mod.attach_shadow_to_job(
+            job, req, engine=engine, bot=bot,
+            named_model=named_model, named_effort=named_effort,
+        )
+    except Exception as exc:  # noqa: BLE001 — shadow must not affect submit
+        job['shadow'] = {'mode': 'shadow', 'error': str(exc)[:300], 'job_id': job.get('job_id')}
+
+
 def submit_job(req, job):
     """Serialize admission across local submitters sharing STATE (not remote CLI execution)."""
     with (STATE / '.submit.lock').open('a') as lock:
@@ -462,6 +481,9 @@ def main():
         print(json.dumps(info, ensure_ascii=False))
     elif sys.argv[1] == 'submit':
         req = json.load(sys.stdin)
+        # Optional shadow-only fields (never sent to Mac bridge; stripped from .request).
+        shadow_bot = req.pop('bot', None)
+        shadow_scheme = req.pop('ai_switch_scheme', None)
         if set(req) - {'backend', 'prompt', 'session_id', 'model', 'effort', 'wake'}:
             raise ValueError('Unknown request field')
         backend = req['backend']
@@ -472,6 +494,8 @@ def main():
         if req.get('wake') is not None:
             req['wake'] = validate_wake(req['wake'])
         model = req.get('model')
+        named_model = model not in (None, '')
+        named_effort = req.get('effort') not in (None, '')
         extra = {}
         if TARGETS[backend][4] == 'codex':
             effort = req.get('effort')
@@ -517,6 +541,13 @@ def main():
         job_id = str(uuid.uuid4())
         job = dict(job_id=job_id, backend=backend, workspace=TARGETS[backend][2],
                    transport='direct-tailscale-ssh', status='queued', created_at=time.time(), model=model, **extra)
+        shadow_req = dict(req)
+        if shadow_scheme is not None:
+            shadow_req['ai_switch_scheme'] = shadow_scheme
+        if shadow_bot is not None:
+            shadow_req['bot'] = shadow_bot
+        record_shadow(job, shadow_req, engine=TARGETS[backend][4],
+                      named_model=named_model, named_effort=named_effort, bot=shadow_bot)
         submit_job(req, job)
         print(json.dumps(job))
     elif sys.argv[1] == 'status':

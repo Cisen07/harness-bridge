@@ -37,6 +37,7 @@ direct-jobs/
 sessions/
 *.log
 harness-ledger.jsonl
+shadow/
 watchdog/
 patrol/current.txt
 patrol/baseline.txt

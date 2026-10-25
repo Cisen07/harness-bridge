@@ -58,3 +58,7 @@ reconcile privately before any state repair. This change does not introduce rest
 Claude Code has hooks; Codex does not have an equivalent. Putting the push in the bridge (and in the SSH worker)
 makes it engine-agnostic, independent of prompts, and covers states a CLI hook never sees (crashes, timeouts,
 Mac bridge restarts). Delivery remains best-effort and must be backed by compensating readback.
+
+## P1 shadow routing (record-only)
+SSH `submit` may attach a `shadow` comparison of suggested vs actual tier/engine/model/effort. It never
+changes selection or rejects jobs. See [shadow-routing.md](shadow-routing.md).
