@@ -12,7 +12,8 @@ Configuration (nothing host-specific is hard-coded):
   HARNESS_WAKE_KEY_ENV    permitted key environment variable (default HARNESS_WAKE_KEY)
   HARNESS_SHADOW_POLICY   optional shadow policy JSON (default: bundled example or $HARNESS_HOME/shadow_policy.json)
   HARNESS_SHADOW_LEDGER   optional JSONL ledger path (default: $HARNESS_HOME/shadow/ledger.jsonl)
-  HARNESS_SHADOW_BOT      optional bot identity for shadow Ada / conflict recording
+  HARNESS_SHADOW_BOT      optional bot identity for shadow hard-binding / conflict recording
+  HARNESS_SHADOW_IO_TIMEOUT  max seconds for shadow policy/ledger I/O (default 0.5); never blocks admission
 Usage: targets | submit (JSON on stdin) | status JOB_ID
 """
 import fcntl
@@ -418,7 +419,11 @@ def worker(job_id):
 
 
 def record_shadow(job, req, *, engine, named_model, named_effort, bot=None):
-    """Attach P1 shadow suggestion to the job. Failures never affect submit."""
+    """Attach P1 shadow suggestion to the job after admission.
+
+    Bounded best-effort: slow/failing policy or ledger I/O never delays or fails
+    submit (caller must invoke this only after submit_job / enqueue).
+    """
     try:
         path = pathlib.Path(__file__).resolve().with_name('shadow_route.py')
         spec = importlib.util.spec_from_file_location('_harness_shadow_route', path)
@@ -541,6 +546,8 @@ def main():
         job_id = str(uuid.uuid4())
         job = dict(job_id=job_id, backend=backend, workspace=TARGETS[backend][2],
                    transport='direct-tailscale-ssh', status='queued', created_at=time.time(), model=model, **extra)
+        # Admission first: shadow I/O must never gate enqueue / worker start.
+        submit_job(req, job)
         shadow_req = dict(req)
         if shadow_scheme is not None:
             shadow_req['ai_switch_scheme'] = shadow_scheme
@@ -548,7 +555,11 @@ def main():
             shadow_req['bot'] = shadow_bot
         record_shadow(job, shadow_req, engine=TARGETS[backend][4],
                       named_model=named_model, named_effort=named_effort, bot=shadow_bot)
-        submit_job(req, job)
+        if job.get('shadow') is not None:
+            try:
+                write(job_path(job['job_id']), job)
+            except Exception:  # noqa: BLE001 — ledger/job refresh is best-effort
+                pass
         print(json.dumps(job))
     elif sys.argv[1] == 'status':
         print(job_path(sys.argv[2]).read_text())

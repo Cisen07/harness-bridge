@@ -3,6 +3,9 @@
 Shadow never changes task selection, never rejects submit, and never requires
 decision_* fields. Compare suggested vs actual locally; optional ledger append
 is best-effort and must not affect dispatch.
+
+Policy/ledger I/O is bounded: attach runs under a hard timeout so slow or
+blocking files never delay or fail admission.
 """
 from __future__ import annotations
 
@@ -10,17 +13,21 @@ import json
 import os
 import pathlib
 import random
+import threading
 import time
 from typing import Any, Callable, Mapping, MutableMapping, Optional, Sequence
 
 DEFAULT_POLICY_PATH = pathlib.Path(__file__).resolve().with_name('shadow_policy.example.json')
+DEFAULT_IO_TIMEOUT_SEC = 0.5
 REASON_NAMED = 'NAMED_TARGET'
-REASON_ADA_HARD_BINDING = 'ADA_HARD_BINDING'
+REASON_HARD_BINDING = 'HARD_BINDING'
 REASON_HARD_BINDING_CONFLICT = 'HARD_BINDING_CONFLICT'
 REASON_WEIGHT_SAMPLE = 'WEIGHT_SAMPLE'
 REASON_DENY_TARGET = 'DENY_TARGET_HIT'
 REASON_OPENROUTER_BANNED = 'OPENROUTER_SCHEME_BANNED'
 REASON_ZERO_WEIGHT = 'NO_ELIGIBLE_TIER'
+REASON_SHADOW_TIMEOUT = 'SHADOW_IO_TIMEOUT'
+REASON_SHADOW_ERROR = 'SHADOW_IO_ERROR'
 
 
 def default_policy_path() -> pathlib.Path:
@@ -33,6 +40,37 @@ def default_policy_path() -> pathlib.Path:
         if candidate.is_file():
             return candidate
     return DEFAULT_POLICY_PATH
+
+
+def shadow_io_timeout_sec(override: Optional[float] = None) -> float:
+    if override is not None:
+        return max(0.05, float(override))
+    raw = os.environ.get('HARNESS_SHADOW_IO_TIMEOUT')
+    if raw is None or raw == '':
+        return DEFAULT_IO_TIMEOUT_SEC
+    return max(0.05, float(raw))
+
+
+def run_bounded(fn: Callable[[], Any], timeout_sec: float) -> Any:
+    """Run fn in a daemon thread; raise TimeoutError if it does not finish in time."""
+    box: dict[str, Any] = {'value': None, 'exc': None, 'done': False}
+
+    def target() -> None:
+        try:
+            box['value'] = fn()
+        except Exception as exc:  # noqa: BLE001 — surfaced to caller after join
+            box['exc'] = exc
+        finally:
+            box['done'] = True
+
+    thread = threading.Thread(target=target, daemon=True)
+    thread.start()
+    thread.join(timeout_sec)
+    if not box['done']:
+        raise TimeoutError('shadow I/O timed out after %.3fs' % timeout_sec)
+    if box['exc'] is not None:
+        raise box['exc']
+    return box['value']
 
 
 def load_policy(path: Optional[pathlib.Path] = None) -> dict:
@@ -81,12 +119,19 @@ def validate_policy(policy: Mapping[str, Any]) -> dict:
     hard = policy.get('hard_bindings') or {}
     if not isinstance(hard, Mapping):
         raise ValueError('hard_bindings must be an object')
+    normalized_hard = {}
+    for key, binding in hard.items():
+        if not isinstance(key, str) or not key:
+            raise ValueError('hard_bindings keys must be non-empty strings')
+        if not isinstance(binding, Mapping):
+            raise ValueError('hard_bindings values must be objects')
+        normalized_hard[key] = dict(binding)
     return {
         'schema_version': 1,
         'mode': policy.get('mode') or 'shadow',
         'policy_revision': policy.get('policy_revision'),
         'tiers': normalized_tiers,
-        'hard_bindings': dict(hard),
+        'hard_bindings': normalized_hard,
         'deny_targets': list(deny),
         'banned_schemes': list(banned),
     }
@@ -101,14 +146,28 @@ def _norm(value: Any) -> Optional[str]:
     return value or None
 
 
-def _identity_is_ada(bot: Optional[str], backend: Optional[str], ada: Mapping[str, Any]) -> bool:
-    identities = {str(x).casefold() for x in (ada.get('identities') or [])}
-    backends = {str(x) for x in (ada.get('backends') or [])}
+def _identity_matches_binding(bot: Optional[str], backend: Optional[str], binding: Mapping[str, Any]) -> bool:
+    identities = {str(x).casefold() for x in (binding.get('identities') or [])}
+    backends = {str(x) for x in (binding.get('backends') or [])}
     if bot and bot.casefold() in identities:
         return True
     if backend and backend in backends:
         return True
     return False
+
+
+def _find_hard_binding(
+    bot: Optional[str],
+    backend: Optional[str],
+    hard_bindings: Mapping[str, Any],
+) -> tuple[Optional[str], Optional[dict]]:
+    """First policy hard_bindings entry whose identities/backends match (JSON-driven)."""
+    for binding_id, binding in hard_bindings.items():
+        if not isinstance(binding, Mapping):
+            continue
+        if _identity_matches_binding(bot, backend, binding):
+            return binding_id, dict(binding)
+    return None, None
 
 
 def _route_dict(engine=None, model=None, effort=None, backend=None, tier=None) -> dict:
@@ -134,20 +193,19 @@ def _matches_binding(actual: Mapping[str, Any], binding: Mapping[str, Any]) -> b
     return True
 
 
-def _named_conflicts_ada(named: Mapping[str, Any], ada: Mapping[str, Any]) -> bool:
-    """True when an explicit named choice disagrees with Ada hard binding."""
+def _named_conflicts_binding(named: Mapping[str, Any], binding: Mapping[str, Any]) -> bool:
+    """True when an explicit named choice disagrees with a hard binding."""
     if not named.get('named'):
         return False
-    if named.get('model') and ada.get('model') and named.get('model') != ada.get('model'):
+    if named.get('model') and binding.get('model') and named.get('model') != binding.get('model'):
         return True
-    if named.get('effort') is not None and ada.get('effort') is not None and named.get('effort') != ada.get('effort'):
+    if named.get('effort') is not None and binding.get('effort') is not None and named.get('effort') != binding.get('effort'):
         return True
-    if named.get('engine') and ada.get('engine') and named.get('engine') != ada.get('engine'):
+    if named.get('engine') and binding.get('engine') and named.get('engine') != binding.get('engine'):
         return True
-    backends = set(ada.get('backends') or [])
+    backends = set(binding.get('backends') or [])
     backend = named.get('backend')
     if backend and backends and backend not in backends:
-        # Non-Ada backend while Ada identity is present and something was named.
         return True
     return False
 
@@ -225,8 +283,7 @@ def suggest_route(
     suggested = None
     selection = None
 
-    ada = (policy.get('hard_bindings') or {}).get('ada') or {}
-    is_ada = _identity_is_ada(bot, backend, ada) if ada else False
+    binding_id, binding = _find_hard_binding(bot, backend, policy.get('hard_bindings') or {})
 
     banned = detect_banned_scheme(
         [model, backend, ai_switch_scheme, engine],
@@ -241,16 +298,16 @@ def suggest_route(
         reasons.append(REASON_DENY_TARGET)
         notes.append('backend %s is in deny_targets (shadow record only; submit unchanged)' % backend)
 
-    if is_ada and ada:
+    if binding_id and binding:
         suggested = _route_dict(
-            engine=ada.get('engine'),
-            model=ada.get('model'),
-            effort=ada.get('effort'),
-            backend=ada.get('preferred_backend') or backend,
-            tier='ada-hard-binding',
+            engine=binding.get('engine'),
+            model=binding.get('model'),
+            effort=binding.get('effort'),
+            backend=binding.get('preferred_backend') or backend,
+            tier='%s-hard-binding' % binding_id,
         )
-        selection = 'ada_hard_binding'
-        reasons.append(REASON_ADA_HARD_BINDING)
+        selection = 'hard_binding'
+        reasons.append(REASON_HARD_BINDING)
         named_view = {
             'named': named,
             'model': model if named_model else None,
@@ -258,9 +315,11 @@ def suggest_route(
             'engine': engine,
             'backend': backend,
         }
-        if _named_conflicts_ada(named_view, ada) or (named and not _matches_binding(actual, ada)):
+        if _named_conflicts_binding(named_view, binding) or (named and not _matches_binding(actual, binding)):
             reasons.append(REASON_HARD_BINDING_CONFLICT)
-            notes.append('named target conflicts with Ada hard binding; shadow records only (no reject)')
+            notes.append(
+                'named target conflicts with hard binding %s; shadow records only (no reject)' % binding_id
+            )
         if named:
             reasons.append(REASON_NAMED)
     elif named:
@@ -314,7 +373,7 @@ def suggest_route(
             'backend': named_backend,
         },
         'banned_scheme': banned,
-        'ada_identity': is_ada,
+        'hard_binding_id': binding_id,
     }
 
 
@@ -340,7 +399,7 @@ def build_shadow_record(
         'bot': suggestion.get('bot'),
         'named': suggestion.get('named'),
         'banned_scheme': suggestion.get('banned_scheme'),
-        'ada_identity': suggestion.get('ada_identity'),
+        'hard_binding_id': suggestion.get('hard_binding_id'),
     }
 
 
@@ -369,6 +428,50 @@ def append_ledger(record: Mapping[str, Any], path: Optional[pathlib.Path] = None
     return str(path)
 
 
+def _attach_shadow_body(
+    job: MutableMapping[str, Any],
+    req: Mapping[str, Any],
+    *,
+    engine: Optional[str],
+    bot: Optional[str],
+    named_model: bool,
+    named_effort: bool,
+    policy: Optional[Mapping[str, Any]],
+    rng: Optional[random.Random],
+    ledger: bool,
+    load_policy_fn: Optional[Callable[[], Mapping[str, Any]]],
+) -> Optional[dict]:
+    pol = policy if policy is not None else (load_policy_fn() if load_policy_fn else load_policy())
+    suggestion = suggest_route(
+        backend=job.get('backend') or req.get('backend'),
+        engine=engine,
+        model=job.get('model') if job.get('model') is not None else req.get('model'),
+        effort=job.get('effort') if job.get('effort') is not None else req.get('effort'),
+        bot=bot if bot is not None else req.get('bot') or os.environ.get('HARNESS_SHADOW_BOT'),
+        named_model=named_model,
+        named_effort=named_effort,
+        named_backend=False,
+        ai_switch_scheme=req.get('ai_switch_scheme') or os.environ.get('HARNESS_SHADOW_AI_SWITCH_SCHEME'),
+        policy=pol,
+        rng=rng,
+    )
+    record = build_shadow_record(
+        suggestion,
+        job_id=job.get('job_id'),
+        backend=job.get('backend'),
+        created_at=job.get('created_at'),
+    )
+    job['shadow'] = record
+    if ledger:
+        try:
+            written = append_ledger(record)
+            if written:
+                job['shadow']['ledger_path'] = written
+        except Exception as exc:  # noqa: BLE001 — shadow must not affect submit
+            job['shadow']['ledger_error'] = str(exc)[:200]
+    return record
+
+
 def attach_shadow_to_job(
     job: MutableMapping[str, Any],
     req: Mapping[str, Any],
@@ -381,42 +484,48 @@ def attach_shadow_to_job(
     rng: Optional[random.Random] = None,
     ledger: bool = True,
     load_policy_fn: Optional[Callable[[], Mapping[str, Any]]] = None,
+    io_timeout: Optional[float] = None,
 ) -> Optional[dict]:
-    """Compute shadow, mutate job['shadow'], optional ledger. Never raises to callers."""
+    """Compute shadow, mutate job['shadow'], optional ledger.
+
+    Never raises to callers. Policy/ledger I/O runs under a hard timeout so
+    blocking special files or slow disks cannot delay callers beyond the bound.
+    Work happens on a scratch copy so a timed-out thread cannot overwrite the
+    timeout/error record after admission has moved on.
+    """
+    timeout = shadow_io_timeout_sec(io_timeout)
+    started = time.monotonic()
+    scratch: dict[str, Any] = dict(job)
+
+    def _run() -> Optional[dict]:
+        return _attach_shadow_body(
+            scratch, req,
+            engine=engine, bot=bot,
+            named_model=named_model, named_effort=named_effort,
+            policy=policy, rng=rng, ledger=ledger,
+            load_policy_fn=load_policy_fn,
+        )
+
     try:
-        pol = policy if policy is not None else (load_policy_fn() if load_policy_fn else load_policy())
-        suggestion = suggest_route(
-            backend=job.get('backend') or req.get('backend'),
-            engine=engine,
-            model=job.get('model') if job.get('model') is not None else req.get('model'),
-            effort=job.get('effort') if job.get('effort') is not None else req.get('effort'),
-            bot=bot if bot is not None else req.get('bot') or os.environ.get('HARNESS_SHADOW_BOT'),
-            named_model=named_model,
-            named_effort=named_effort,
-            named_backend=False,
-            ai_switch_scheme=req.get('ai_switch_scheme') or os.environ.get('HARNESS_SHADOW_AI_SWITCH_SCHEME'),
-            policy=pol,
-            rng=rng,
-        )
-        record = build_shadow_record(
-            suggestion,
-            job_id=job.get('job_id'),
-            backend=job.get('backend'),
-            created_at=job.get('created_at'),
-        )
-        job['shadow'] = record
-        if ledger:
-            try:
-                written = append_ledger(record)
-                if written:
-                    job['shadow']['ledger_path'] = written
-            except Exception as exc:  # noqa: BLE001 — shadow must not affect submit
-                job['shadow']['ledger_error'] = str(exc)[:200]
+        record = run_bounded(_run, timeout)
+        if 'shadow' in scratch:
+            job['shadow'] = scratch['shadow']
         return record
+    except TimeoutError as exc:
+        job['shadow'] = {
+            'mode': 'shadow',
+            'error': str(exc)[:300],
+            'reason': REASON_SHADOW_TIMEOUT,
+            'job_id': job.get('job_id'),
+            'elapsed_sec': round(time.monotonic() - started, 3),
+        }
+        return None
     except Exception as exc:  # noqa: BLE001 — shadow must not affect submit
         job['shadow'] = {
             'mode': 'shadow',
             'error': str(exc)[:300],
+            'reason': REASON_SHADOW_ERROR,
             'job_id': job.get('job_id'),
+            'elapsed_sec': round(time.monotonic() - started, 3),
         }
         return None

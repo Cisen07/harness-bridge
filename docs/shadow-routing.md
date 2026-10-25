@@ -15,7 +15,10 @@ Shadow **does not**:
 - read secret values, TF config, or a second live config source
 
 Failure while computing or ledgering shadow is recorded on the job when possible
-and never fails admission.
+and never fails admission. Shadow runs **after** job enqueue; policy/ledger I/O
+is hard-bounded (`HARNESS_SHADOW_IO_TIMEOUT`, default 0.5s). Timeout or I/O
+failure discards the suggestion (error on `job.shadow`) and never delays or
+fails dispatch.
 
 ## Locked policy (example)
 
@@ -27,8 +30,15 @@ Bundled at [`dispatcher/shadow_policy.example.json`](../dispatcher/shadow_policy
 | sol       | 50         | codex  | gpt-6.1-sol           | medium |
 | deepseek  | 30         | claude | deepseek-v4.1-flash   | —      |
 
-- **Ada hard binding** (Ada identity or `tw-tl-*` backends only): Codex
-  `gpt-6-astra` / `medium`. Non-Ada identities are not hard-bound.
+- **Hard bindings** (fully JSON-driven under `hard_bindings`): each entry lists
+  `identities` / `backends` matchers plus suggested `engine` / `model` /
+  `effort` / `preferred_backend`. The OSS example uses fictional `bot_a` →
+  BotA / `bot-a-*` backends. Changing alias or backend requires only a policy
+  edit — no code change. Unmatched identities such as BotB / LegacyBot are not
+  hard-bound and fall through to named / weight sample.
+- **Private deploy**: real role→route mappings belong only in the private
+  `$HARNESS_HOME/shadow_policy.json` (or `HARNESS_SHADOW_POLICY`); do not put
+  production bot names or backends back into the OSS example.
 - **deny_targets**: empty minimal set in the example.
 - **OpenRouter `SCHEME_8`**: retained in policy as a banned scheme
   (`panel`/`active` = banned); shadow records `OPENROUTER_SCHEME_BANNED` when
@@ -39,21 +49,22 @@ request field `bot` (stripped from `.request`) or `HARNESS_SHADOW_BOT`.
 
 ## Suggested selection order (record-only)
 
-1. Ada hard binding (if Ada identity / Ada backend)
+1. Hard binding (first `hard_bindings` entry whose identities/backends match)
 2. Else explicit named model/effort (点名)
 3. Else weighted sample among positive `weight_pct` tiers (RNG injectable for tests)
 
-If Ada and 点名 disagree → reason `HARD_BINDING_CONFLICT` is **recorded**; submit
-still proceeds with the caller’s actual route.
+If a hard binding and 点名 disagree → reason `HARD_BINDING_CONFLICT` is
+**recorded**; submit still proceeds with the caller’s actual route.
 
 ## Ledger
 
-Optional JSONL append (best-effort):
+Optional JSONL append (best-effort, same I/O bound as policy load):
 
 - `HARNESS_SHADOW_LEDGER` — absolute path
 - default: `$HARNESS_HOME/shadow/ledger.jsonl` (example/private deploy dir, not a
   real box path in this repo)
 - `HARNESS_SHADOW_LEDGER_DISABLE=1` skips writing
+- `HARNESS_SHADOW_IO_TIMEOUT` — seconds (default `0.5`); applies to attach
 
 ## Boundary vs P2 (enforcement)
 

@@ -1,5 +1,5 @@
 {
-  "_comment": "P1 shadow routing policy example. Copy to $HARNESS_HOME/shadow_policy.json (chmod 600) or point HARNESS_SHADOW_POLICY at a private file. Shadow mode only records suggestions; it never changes dispatch, rejects jobs, or forces decision_* fields. No hosts, tokens, or real webhook URLs belong here.",
+  "_comment": "P1 shadow routing policy example. Copy to $HARNESS_HOME/shadow_policy.json (chmod 600) or point HARNESS_SHADOW_POLICY at a private file. Shadow mode only records suggestions; it never changes dispatch, rejects jobs, or forces decision_* fields. No hosts, tokens, real bot names, real backends, or real webhook URLs belong here. Production hard bindings (role→engine/model/effort) live only in the private deploy copy — see docs/shadow-routing.md.",
   "schema_version": 1,
   "mode": "shadow",
   "policy_revision": "p1-shadow-20261025",
@@ -27,13 +27,13 @@
     }
   ],
   "hard_bindings": {
-    "ada": {
-      "identities": ["Ada", "ada"],
-      "backends": ["tw-tl-codex", "tw-tl-claudecode"],
+    "bot_a": {
+      "identities": ["BotA", "bot-a"],
+      "backends": ["bot-a-codex", "bot-a-claudecode"],
       "engine": "codex",
       "model": "gpt-6-astra",
       "effort": "medium",
-      "preferred_backend": "tw-tl-codex"
+      "preferred_backend": "bot-a-codex"
     }
   },
   "deny_targets": [],
