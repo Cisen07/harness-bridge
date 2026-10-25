@@ -2,10 +2,10 @@
 """Resolve wake={url,key_env} for a named bot from wake/registry.json. Refuse cross-use.
 
 Usage:
-  python3 wake_for_bot.py Ada
-  python3 wake_for_bot.py "TW Grok Bot" --json
-  echo '{"backend":"tw-codex","prompt":"..."}' | python3 wake_for_bot.py TW --inject
-       # prints request JSON with wake attached (bot aliases: Ada,TW,TF,Air,MBP)
+  python3 wake_for_bot.py BotA
+  python3 wake_for_bot.py b --json
+  echo '{"backend":"ubuntu-a-codex","prompt":"..."}' | python3 wake_for_bot.py a --inject
+       # aliases are defined in the private registry
 """
 from __future__ import annotations
 
@@ -27,14 +27,6 @@ def registry_path() -> Path:
 
 
 ENV_NAME_RE = re.compile(r"^[A-Z_][A-Z0-9_]{0,63}$")
-
-ALIASES = {
-  "ada": "Ada",
-  "tw": "TW Grok Bot",
-  "tf": "TF Grok Bot",
-  "air": "Air Grok Bot",
-  "mbp": "MBP Grok Bot",
-}
 
 
 def die(msg: str, code: int = 2) -> None:
@@ -74,17 +66,34 @@ def check_url(url: str, name: str) -> None:
     die(f"{name}: URL rejected; configure HARNESS_WAKE_URL_PREFIX with the trusted HTTPS origin/path")
 
 
+def resolve_name(bot_key: str, bots: dict) -> str:
+  index = {}
+  for name, ent in bots.items():
+    if not isinstance(ent, dict):
+      die("registry bot entries must be objects")
+    aliases = ent.get("aliases", [])
+    if not isinstance(aliases, list):
+      die("registry aliases must be lists")
+    for alias in [name, *aliases]:
+      if not isinstance(alias, str) or not alias.strip():
+        die("registry aliases must be non-empty strings")
+      key = alias.lower()
+      if key in index and index[key] != name:
+        die("ambiguous registry alias or bot name")
+      index[key] = name
+  key = bot_key.lower()
+  if key in index:
+    return index[key]
+  matches = [name for name in bots if key and name.lower().startswith(key)]
+  if len(matches) != 1:
+    die("unknown or ambiguous bot")
+  return matches[0]
+
+
 def resolve(bot_key: str) -> dict:
   reg = load_reg()
-  name = ALIASES.get(bot_key.lower(), bot_key)
-  bots = reg.get("bots") or {}
-  if name not in bots:
-    matches = [k for k in bots if k.lower() == bot_key.lower()]
-    if not matches and bot_key:
-      matches = [k for k in bots if k.lower().startswith(bot_key.lower())]
-    if len(matches) != 1:
-      die(f"unknown or ambiguous bot {bot_key!r}; known={list(bots)}")
-    name = matches[0]
+  bots = reg["bots"]
+  name = resolve_name(bot_key, bots)
   ent = bots[name]
   url_env = ent["url_env"]
   key_env = ent["key_env"]
@@ -95,9 +104,12 @@ def resolve(bot_key: str) -> dict:
     p = harness_home() / ent["url_file"]
     if p.is_file():
       url = p.read_text().strip()
-  # MBP legacy fallback only for MBP itself
-  if not url and name == "MBP Grok Bot" and ent.get("legacy_env"):
-    url = os.environ.get(ent["legacy_env"]["url"])
+  allow_legacy = ent.get("allow_legacy_env") is True
+  legacy = ent.get("legacy_env") or {}
+  if not isinstance(legacy, dict):
+    die("legacy_env must be an object")
+  if not url and allow_legacy and legacy.get("url"):
+    url = os.environ.get(legacy["url"])
   if not url:
     die(f"{name}: {url_env} not set (and no url_file fallback)")
   if not os.environ.get(key_env):
@@ -112,11 +124,23 @@ def resolve(bot_key: str) -> dict:
     ofp = (oent.get("url_fp") or {}).get("last12")
     if ofp and ofp == my_last and other != name:
       die(f"{name}: resolved URL fingerprint collides with {other} — abort")
-  # Hard ban: non-MBP must not resolve to WEBHOOK_URL value
-  if name != "MBP Grok Bot":
-    wh = os.environ.get("WEBHOOK_URL")
-    if wh and url == wh:
-      die(f"{name}: refusing WEBHOOK_URL (MBP legacy); fix {url_env}")
+  # Non-legacy entries cannot reuse any configured legacy URL.
+  if not allow_legacy:
+    forbidden = reg.get("forbidden_legacy_env_for_non_legacy", ["WEBHOOK_URL"])
+    if not isinstance(forbidden, list):
+      die("forbidden_legacy_env_for_non_legacy must be a list")
+    forbidden = set(forbidden)
+    for entry in bots.values():
+      legacy_entry = entry.get("legacy_env") or {}
+      if not isinstance(legacy_entry, dict):
+        die("legacy_env must be an object")
+      if legacy_entry.get("url"):
+        forbidden.add(legacy_entry["url"])
+    for env_name in forbidden:
+      if not isinstance(env_name, str) or not ENV_NAME_RE.fullmatch(env_name):
+        die("invalid legacy URL environment variable name")
+      if os.environ.get(env_name) == url:
+        die(f"{name}: refusing legacy URL from {env_name}; fix {url_env}")
   wake = {"url": url, "key_env": key_env}
   return {"bot": name, "wake": wake, "url_env": url_env, "key_env": key_env}
 

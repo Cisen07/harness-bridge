@@ -1,4 +1,4 @@
-"""Offline regression coverage for the TW registry and Cursor backfill."""
+"""Offline regression coverage for the registry and Cursor backfill."""
 import contextlib
 import importlib.util
 import io
@@ -33,19 +33,18 @@ class RegistryWake(unittest.TestCase):
         self.registry.write_text(json.dumps(self.data))
         self.env = {'PATH': os.environ.get('PATH', ''), 'HARNESS_HOME': str(self.home),
                     'HARNESS_WAKE_URL_PREFIX': 'https://hooks.example.invalid/wake',
-                    'TW_WAKE_URL': 'https://hooks.example.invalid/wake/tw0123456789',
-                    'TW_WAKE_KEY': 'synthetic-test-key'}
+                    'BOT_A_WAKE_URL': 'https://hooks.example.invalid/wake/aaaabbbbcccc',
+                    'BOT_A_WAKE_KEY': 'synthetic-test-key'}
 
-    def run_wake(self, bot='TW', *args, request=None):
+    def run_wake(self, bot='BotA', *args, request=None):
         return subprocess.run([sys.executable, str(WAKE), bot, *args], env=self.env,
                               input=json.dumps(request) if request is not None else None,
                               text=True, capture_output=True)
 
     def test_all_aliases_and_no_key_value_in_output(self):
-        for alias, name in [('Ada', 'Ada'), ('TW', 'TW Grok Bot'), ('TF', 'TF Grok Bot'),
-                            ('Air', 'Air Grok Bot'), ('MBP', 'MBP Grok Bot')]:
+        for alias, name in [('a', 'BotA'), ('BOTB', 'BotB'), ('legacy', 'LegacyBot')]:
             ent = self.data['bots'][name]
-            self.env[ent['url_env']] = self.env['TW_WAKE_URL']
+            self.env[ent['url_env']] = self.env['BOT_A_WAKE_URL']
             self.env[ent['key_env']] = 'synthetic-test-key'
             r = self.run_wake(alias, '--json')
             self.assertEqual(r.returncode, 0, r.stderr)
@@ -53,48 +52,80 @@ class RegistryWake(unittest.TestCase):
             self.assertNotIn('synthetic-test-key', r.stdout + r.stderr)
 
     def test_inject_is_compatible_with_dispatcher_wake_policy(self):
-        req = {'backend': 'tw-cursor', 'prompt': 'ping'}
-        r = self.run_wake('tw', '--inject', request=req)
+        req = {'backend': 'ubuntu-a-codex', 'prompt': 'ping'}
+        r = self.run_wake('a', '--inject', request=req)
         self.assertEqual(r.returncode, 0, r.stderr)
         out = json.loads(r.stdout)
         self.assertEqual(set(out), {'backend', 'prompt', 'wake'})
         with mock.patch.object(S, 'WAKE_URL_PREFIX', self.env['HARNESS_WAKE_URL_PREFIX']), \
-                mock.patch.object(S, 'WAKE_KEY_ENV', 'TW_WAKE_KEY'):
+                mock.patch.object(S, 'WAKE_KEY_ENV', 'BOT_A_WAKE_KEY'):
             self.assertEqual(S.validate_wake(out['wake']), out['wake'])
         for foreign in ({}, {'url': 'https://hooks.example.invalid/wake/foreign', 'key_env': 'OTHER'}):
             req['wake'] = foreign
-            self.assertEqual(self.run_wake('TW', '--inject', request=req).returncode, 2)
+            self.assertEqual(self.run_wake('BotA', '--inject', request=req).returncode, 2)
 
     def test_registry_override_and_url_file_fallback(self):
         path = self.home / 'custom.json'
         self.registry.rename(path)
         self.env['HARNESS_WAKE_REGISTRY'] = str(path)
-        url = self.env.pop('TW_WAKE_URL')
-        (self.home / 'wake/tw_webhook_url').write_text(url + '\n')
+        url = self.env.pop('BOT_A_WAKE_URL')
+        (self.home / 'wake/bota.url').write_text(url + '\n')
         r = self.run_wake()
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(json.loads(r.stdout)['url'], url)
 
     def test_collision_ambiguous_and_legacy_cross_use(self):
-        self.data['bots']['Ada']['url_fp'] = {'last12': 'tw0123456789'}
+        self.data['bots']['BotB']['url_fp'] = {'last12': 'aaaabbbbcccc'}
         self.registry.write_text(json.dumps(self.data))
         self.assertIn('collides', self.run_wake().stderr)
-        self.data['bots']['Ada'].pop('url_fp')
+        self.data['bots']['BotB'].pop('url_fp')
         self.registry.write_text(json.dumps(self.data))
-        self.assertIn('ambiguous', self.run_wake('T').stderr)
-        self.env['WEBHOOK_URL'] = self.env['TW_WAKE_URL']
-        self.assertIn('refusing WEBHOOK_URL', self.run_wake().stderr)
+        self.assertIn('ambiguous', self.run_wake('Bot').stderr)
+        self.env['WEBHOOK_URL'] = self.env['BOT_A_WAKE_URL']
+        self.assertIn('refusing legacy URL', self.run_wake().stderr)
 
-    def test_mbp_legacy_url_needs_real_key_alias(self):
-        self.env['WEBHOOK_URL'] = self.env['TW_WAKE_URL']
+    def test_legacy_url_needs_real_key_alias(self):
+        self.env['WEBHOOK_URL'] = self.env['BOT_A_WAKE_URL']
         self.env['WEBHOOK_AUTH'] = 'Bearer fake-key'
-        r = self.run_wake('MBP')
+        r = self.run_wake('LegacyBot')
         self.assertEqual(r.returncode, 2)
         self.assertNotIn('synthetic-test-key', r.stdout + r.stderr)
-        self.env['MBP_WAKE_KEY'] = 'synthetic-test-key'
-        r = self.run_wake('MBP')
+        self.env['LEGACY_WAKE_KEY'] = 'synthetic-test-key'
+        r = self.run_wake('LegacyBot')
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(json.loads(r.stdout)['key_env'], 'MBP_WAKE_KEY')
+        self.assertEqual(json.loads(r.stdout)['key_env'], 'LEGACY_WAKE_KEY')
+
+    def test_registry_controls_aliases_and_legacy_after_rename(self):
+        entry = self.data['bots'].pop('LegacyBot')
+        entry['aliases'] = ['retired-endpoint']
+        entry['legacy_env']['url'] = 'OLD_BOT_URL'
+        self.data['bots']['RenamedBot'] = entry
+        self.registry.write_text(json.dumps(self.data))
+        self.env['OLD_BOT_URL'] = 'https://hooks.example.invalid/wake/legacy'
+        self.env['LEGACY_WAKE_KEY'] = 'synthetic-test-key'
+        r = self.run_wake('RETIRED-ENDPOINT', '--json')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout)['bot'], 'RenamedBot')
+        self.assertEqual(self.run_wake('legacy').returncode, 2)
+        self.env['BOT_A_WAKE_URL'] = self.env['OLD_BOT_URL']
+        self.assertIn('refusing legacy URL', self.run_wake().stderr)
+        for opt_in in (False, None, 'true'):
+            entry['allow_legacy_env'] = opt_in
+            self.registry.write_text(json.dumps(self.data))
+            self.assertEqual(self.run_wake('retired-endpoint').returncode, 2)
+        entry.pop('allow_legacy_env')
+        self.registry.write_text(json.dumps(self.data))
+        self.assertEqual(self.run_wake('retired-endpoint').returncode, 2)
+
+    def test_alias_collisions_fail_in_both_registry_orders(self):
+        for alias in ('A', 'bota'):
+            self.data['bots']['BotB']['aliases'] = [alias]
+            for reverse in (False, True):
+                self.data['bots'] = dict(sorted(self.data['bots'].items(), reverse=reverse))
+                self.registry.write_text(json.dumps(self.data))
+                r = self.run_wake('a')
+                self.assertEqual(r.returncode, 2)
+                self.assertIn('ambiguous', r.stderr)
 
     def test_url_boundary_and_missing_config(self):
         for url in ('http://hooks.example.invalid/wake/a',
@@ -102,11 +133,11 @@ class RegistryWake(unittest.TestCase):
                     'https://hooks.example.invalid/wake-other/a',
                     'https://user@hooks.example.invalid/wake/a',
                     'https://hooks.example.invalid/wake/a?key=synthetic-test-key'):
-            self.env['TW_WAKE_URL'] = url
+            self.env['BOT_A_WAKE_URL'] = url
             r = self.run_wake()
             self.assertEqual(r.returncode, 2)
             self.assertNotIn('synthetic-test-key', r.stdout + r.stderr)
-        self.env['TW_WAKE_URL'] = 'https://hooks.example.invalid/wake/a'
+        self.env['BOT_A_WAKE_URL'] = 'https://hooks.example.invalid/wake/a'
         self.env.pop('HARNESS_WAKE_URL_PREFIX')
         self.assertEqual(self.run_wake().returncode, 2)
 
