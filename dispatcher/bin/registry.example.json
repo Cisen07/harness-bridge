@@ -1,0 +1,44 @@
+{
+  "_comment": "Copy to $HARNESS_HOME/wake/registry.json (mode 0600). Fictional bots only; real bot inventories, webhook URLs and keys stay private.",
+  "version": 1,
+  "forbidden_legacy_env_for_non_legacy": [
+    "WEBHOOK_URL"
+  ],
+  "bots": {
+    "BotA": {
+      "aliases": [
+        "a",
+        "bota"
+      ],
+      "url_env": "BOT_A_WAKE_URL",
+      "key_env": "BOT_A_WAKE_KEY",
+      "url_file": "wake/bota.url",
+      "allow_legacy_env": false,
+      "owner_bot": "BotA"
+    },
+    "BotB": {
+      "aliases": [
+        "b",
+        "botb"
+      ],
+      "url_env": "BOT_B_WAKE_URL",
+      "key_env": "BOT_B_WAKE_KEY",
+      "url_file": "wake/botb.url",
+      "allow_legacy_env": false,
+      "owner_bot": "BotB"
+    },
+    "LegacyBot": {
+      "aliases": [
+        "legacy"
+      ],
+      "url_env": "LEGACY_WAKE_URL",
+      "key_env": "LEGACY_WAKE_KEY",
+      "allow_legacy_env": true,
+      "legacy_env": {
+        "url": "WEBHOOK_URL"
+      },
+      "owner_bot": "LegacyBot",
+      "_comment": "Legacy URL fallback requires allow_legacy_env=true. The declared key_env must contain the bare key in the dispatcher environment."
+    }
+  }
+}

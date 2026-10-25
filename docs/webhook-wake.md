@@ -85,6 +85,74 @@ echo '{"backend":"ubuntu-a-codex","prompt":"ping"}' \
 Trusted URL prefix still comes from `HARNESS_WAKE_URL_PREFIX` (see §2b). Real bot
 names, webhook paths and keys stay in the private routing file and environment.
 
+### Registry-compatible entry point
+
+[`dispatcher/bin/wake_for_bot.py`](../dispatcher/bin/wake_for_bot.py) accepts the
+`wake/registry.json` format. Names and aliases come from each registry entry;
+the public example uses fictional `BotA`, `BotB`, and `LegacyBot` only.
+Real names, environment mappings and backend inventories belong only in the
+private registry, which must not be committed.
+It resolves `{url,key_env}`, supports `--json` and `--inject`, and performs no
+network requests. Existing `wake_finalize.py` / `harness_submit.py` users continue
+to use `routing.json`; the two files are not automatically synchronized.
+
+```bash
+export HARNESS_HOME="$HOME/harness"
+mkdir -p "$HARNESS_HOME/wake"
+cp dispatcher/bin/registry.example.json "$HARNESS_HOME/wake/registry.json"
+chmod 600 "$HARNESS_HOME/wake/registry.json"
+export HARNESS_WAKE_URL_PREFIX='https://hooks.example.invalid/wake'
+# Configure BOT_A_WAKE_URL and BOT_A_WAKE_KEY privately in the dispatcher environment.
+export HARNESS_WAKE_KEY_ENV=BOT_A_WAKE_KEY
+set -o pipefail
+printf '%s\n' '{"backend":"ubuntu-a-codex","prompt":"reply OK"}' \
+  | python3 dispatcher/bin/wake_for_bot.py a --inject \
+  | python3 dispatcher/direct_ssh_client.py submit
+```
+
+`HARNESS_HOME` defaults to `~/harness`. `HARNESS_WAKE_REGISTRY` overrides the
+registry path; relative `url_file` entries resolve against `HARNESS_HOME`.
+Environment URLs take precedence over URL files. A trusted
+`HARNESS_WAKE_URL_PREFIX` is required, with the exact HTTPS origin/path rules
+from §2b. Set `HARNESS_WAKE_KEY_ENV` to the selected bot's `key_env` in the
+dispatcher environment; the worker's single-key allowlist remains enforced.
+The helper never prints key values, but stdout contains the resolved URL and
+request: pipe it to submit and keep it out of shared logs.
+
+Foreign wake overwrite, ambiguous bot prefixes, declared fingerprint collisions,
+and non-legacy reuse of configured legacy URLs are refused. Aliases are matched
+case-insensitively from each entry's `aliases` list; aliases shared by different
+bots or colliding with another bot name are rejected. The public registry omits real fingerprints.
+In a private registry, optional `url_fp.last12` retains the historical format:
+**the first 12 characters of the last URL path segment**, despite its
+historical name. Populate it for cross-bot collision detection; this is a
+configuration guard, not an authorization boundary.
+
+Legacy URL fallback requires `allow_legacy_env: true` plus `legacy_env.url`
+on the selected entry; no bot name grants this permission. Entries without
+explicit opt-in cannot reuse URL values from any registry `legacy_env.url` or
+`forbidden_legacy_env_for_non_legacy` (default: `["WEBHOOK_URL"]`).
+The declared `key_env` (e.g. `LEGACY_WAKE_KEY`) must still contain the bare key
+in the dispatcher/worker environment. The helper rejects a missing key even
+when `WEBHOOK_AUTH` is set: a child process cannot create a usable key alias
+in its parent, and a `Bearer …` header is not a bare key.
+
+### Cursor SSH target
+
+The `tw-cursor` entry in [`targets.example.json`](../dispatcher/targets.example.json)
+uses placeholder host/account/path values. Copy it into private `targets.json`
+and point `entry` at an installed, authenticated Cursor `agent` CLI. `engine=cursor`
+supports optional `model` (passed directly as `--model`) and `session_id`
+(`--resume`); `effort` remains Codex-only and `switch_helper` is not used.
+Prompts arrive on stdin in the configured workspace. The backfilled command uses
+`-p --output-format json --force --trust --sandbox disabled`, allowing unattended
+writes/commands in the trusted remote account. Configure that account accordingly.
+
+The [Cursor JSON result schema](https://docs.cursor.com/en/cli/reference/output-format)
+fits the existing terminal-result parser. Empty, malformed, or incomplete output
+fails the job; the LIVE plain-text-success fallback is deliberately excluded.
+Existing session conflict and returned-session checks continue to apply.
+
 ## Receiver idempotency (integrator responsibility)
 The public examples do not implement concurrent exactly-once ledger accounting or receiver locking;
 `_job_summary.py` has a read-then-append race. The following is guidance for integrators requiring those guarantees.
