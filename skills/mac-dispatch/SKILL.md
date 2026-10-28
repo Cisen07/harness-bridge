@@ -41,6 +41,11 @@ running that CLI on the Mac directly. Report only what the API shows.
      A tier request requires a request/session model even if `[tier] require_explicit_selection=false`.
      With that guard true, all jobs need a request/session model; effort alone does not count.
      Defaults are `allowed_tiers=[]`, guard false. SSH submit is not aligned with this contract.
+   - Mac HTTP Codex only: optional `service_tier` accepts exactly `default` or `priority`.
+     Omission explicitly overrides host config with default, including resume; priority never sticks.
+     Request priority on each intended turn. It does not satisfy the model guard and is rejected
+     by Claude. SSH submit is not aligned. `effective_service_tier` reports the CLI override,
+     not provider acknowledgement or proof of delivered service.
 3. `GET /jobs/<id>` returns status, result, exit_code, model/effort, model_source, effective_model/effort, warnings.
 4. Up to `max_workers` (default 4) jobs run at once across both backends; a second job on the same session_id gets 409.
 

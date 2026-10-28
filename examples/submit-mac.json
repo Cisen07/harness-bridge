@@ -2,5 +2,6 @@
   "backend": "mac-codex",
   "model": "gpt-6.1-sol:medium",
   "prompt": "Run the unit tests in ./service and summarize failures. Write long output (code, logs, reports) to a file under the workspace and give its path. Your final reply must be at most 15 lines: outcome, artifact paths, decisions needed, anything blocked.",
-  "tier": "example-tier"
+  "tier": "example-tier",
+  "service_tier": "default"
 }

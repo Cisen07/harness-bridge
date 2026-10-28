@@ -288,13 +288,18 @@ def effective_selection(backend, parsed, model, effort):
     return {'model': model or default['model'], 'effort': effort or default['effort']}
 
 
-def run_job(job_id, prompt, session_id, backend='mac-codex', model=None, effort=None):
+def run_job(job_id, prompt, session_id, backend='mac-codex', model=None, effort=None, service_tier=None):
     with LOCK:
         job = JOBS[job_id]
         job['status'] = 'running'
         save()
     try:
-        cmd = command_for(backend, session_id, model, effort)
+        cmd = command_for(backend, session_id, model, effort,
+                          **({'service_tier': service_tier} if service_tier is not None else {}))
+        with LOCK:
+            # This records the CLI override, not a provider acknowledgement.
+            job['effective_service_tier'] = (service_tier or 'default') if BACKENDS[backend]['engine'] == 'codex' else None
+            save()
         result = run_agent(cmd, prompt)
         parsed = parse_events(BACKENDS[backend]['engine'], result.stdout)
         actual_session = parsed['session_id']
@@ -334,13 +339,15 @@ def run_job(job_id, prompt, session_id, backend='mac-codex', model=None, effort=
         notify_terminal(notification)
 
 
-def resolve_session_selection(session, backend, model, effort):
+def resolve_session_selection(session, backend, model, effort, service_tier=None):
     """Sticky per-session model: a resume without model/effort reuses the session's last selection.
 
     Codex resume otherwise falls back to config.toml's default, silently switching models.
     An explicit model/effort on resume is allowed; the change is recorded in model_switched_from.
     Caller holds LOCK.
     """
+    # Service tier belongs only to the current request, never session history.
+    current_tier = {'service_tier': (service_tier or 'default') if BACKENDS[backend]['engine'] == 'codex' else None}
     previous = None
     if session:
         history = [x for x in JOBS.values() if x.get('session_id') == session and x.get('backend', 'mac-codex') == backend]
@@ -348,9 +355,9 @@ def resolve_session_selection(session, backend, model, effort):
             previous = max(history, key=lambda x: x.get('created_at', ''))
     if model is None and effort is None:
         if previous and (previous.get('model') or previous.get('effort')):
-            return {'model': previous.get('model'), 'effort': previous.get('effort'), 'model_source': 'session'}
-        return {'model': None, 'effort': None, 'model_source': 'default'}
-    out = {'model': model, 'effort': effort, 'model_source': 'request'}
+            return dict(current_tier, model=previous.get('model'), effort=previous.get('effort'), model_source='session')
+        return dict(current_tier, model=None, effort=None, model_source='default')
+    out = dict(current_tier, model=model, effort=effort, model_source='request')
     if previous is not None:
         before = (previous.get('model'), previous.get('effort'))
         if model is None:  # effort-only override keeps the session's model
@@ -398,7 +405,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                     'workspace': str(WORKSPACE)})
         if self.path == '/backends':
             info = {k: dict({field: b[field] for field in ['host', 'account', 'engine', 'workspace']},
-                            supports_model=True, supports_effort=(b['engine'] == 'codex'))
+                            supports_model=True, supports_effort=(b['engine'] == 'codex'),
+                            supports_service_tier=(b['engine'] == 'codex'))
                     for k, b in BACKENDS.items()}
             info['mac-codex'].update(models={k: list(v) for k, v in sorted(codex_models().items())},
                                      default=codex_config_default(),
@@ -431,13 +439,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if not 0 < length <= MAX_BODY:
                 raise ValueError(f'Body must be 1..{MAX_BODY} bytes')
             data = json.loads(self.rfile.read(length))
-            if not isinstance(data, dict) or set(data) - {'prompt', 'session_id', 'backend', 'model', 'effort', 'tier'}:
-                raise ValueError('Only prompt, optional session_id, backend, model, effort and tier are accepted')
+            if not isinstance(data, dict) or set(data) - {'prompt', 'session_id', 'backend', 'model', 'effort', 'tier', 'service_tier'}:
+                raise ValueError('Only prompt, optional session_id, backend, model, effort, tier and service_tier are accepted')
             backend = data.get('backend', 'mac-codex')
             if not isinstance(backend, str) or backend not in ('mac-codex', 'mac-claudecode'):
                 return self.reply(400, {'error': 'Unsupported backend; only mac-codex and mac-claudecode are allowed'})
             try:
-                model, effort = normalize_selection(backend, data.get('model'), data.get('effort'))
+                model, effort, service_tier = normalize_selection(
+                    backend, data.get('model'), data.get('effort'),
+                    **({'service_tier': data['service_tier']} if 'service_tier' in data else {}))
             except ModelError as error:
                 return self.reply(400, {'error': str(error)})
             tier = data.get('tier')
@@ -462,7 +472,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if session and any(x.get('session_id') == session and
                                    x['status'] in ('queued', 'running') for x in JOBS.values()):
                     return self.reply(409, {'error': 'This session_id already has a queued or running job; concurrent resumes are not allowed'})
-                selection = resolve_session_selection(session, backend, model, effort)
+                selection = resolve_session_selection(session, backend, model, effort, service_tier)
                 # A routing tier is metadata, never a model selection. Resolve
                 # session history first so a resume can reuse its explicit model.
                 if selection['model'] is None:
@@ -475,12 +485,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 record = {'job_id': job_id, 'status': 'queued', 'session_id': session,
                           'source': self.source_name,
                           'workspace': BACKENDS[backend]['workspace'], 'backend': backend,
-                          'tier': tier,
+                          'tier': tier, 'effective_service_tier': None,
                           'created_at': datetime.datetime.now(datetime.timezone.utc).isoformat()}
                 record.update(selection)
                 JOBS[job_id] = record
                 save()
-                POOL.submit(run_job, job_id, prompt, session, backend, record['model'], record['effort'])
+                POOL.submit(run_job, job_id, prompt, session, backend, record['model'], record['effort'], record['service_tier'])
             return self.reply(202, {'job_id': job_id, 'status': 'queued'})
         except (ValueError, KeyError, TypeError):
             return self.reply(400, {'error': 'Invalid JSON request, prompt, or session_id'})

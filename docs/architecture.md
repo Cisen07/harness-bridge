@@ -71,3 +71,16 @@ model; the bridge neither routes by tier nor passes it to the CLI. Any tier
 request needs a request/session model. The optional `[tier]` explicit selection
 guard defaults to false; enabling it also rejects unselected legacy requests.
 The P1 shadow suggestion remains observational and does not satisfy this guard.
+
+## Mac HTTP Codex service tier
+
+`service_tier` selects only the current Codex request's `default` or `priority`
+CLI override. It does not select a routing tier, backend, model, or reasoning effort.
+Model/effort session reuse remains unchanged; service tier never sticks. A resumed
+priority job with the field omitted explicitly returns to default, overriding host
+configuration. Neither effort nor service_tier satisfies the explicit model guard.
+
+This contract is only implemented for Mac HTTP; SSH submit is not aligned.
+`effective_service_tier` records a prepared CLI override, not provider acknowledgement
+or proof of delivered priority service. Old journal records may omit both
+service-tier fields, so consumers must not invent historical values.

@@ -3,7 +3,7 @@
 Model selection (optional, per job):
   * model:  model slug, optionally with ':effort' suffix, e.g. 'gpt-6-astra:medium'
   * effort: reasoning effort, e.g. 'medium' (mac-codex only)
-Omitting both keeps the plain command line (the CLI's local config default).
+Omitting model/effort keeps their local defaults; service_tier always defaults to default.
 All paths come from bridge_config (config.toml); nothing host-specific is hard-coded.
 """
 import glob
@@ -27,6 +27,8 @@ BACKENDS = {
 CODEX_HOME = _CODEX['home']
 CLAUDE_ENV_MISSING = 'claude env script missing'
 CLAUDE_SWITCH_FAILED_EXIT = 79
+SERVICE_TIERS = ('default', 'priority')
+_SERVICE_TIER_UNSET = object()
 
 EFFORTS = ('low', 'medium', 'high', 'xhigh', 'max', 'ultra')
 _FULL = EFFORTS
@@ -67,26 +69,35 @@ def codex_models():
     return models
 
 
-def normalize_selection(backend, model=None, effort=None):
-    """Return (model, effort) validated for backend; (None, None) means local default."""
+def normalize_selection(backend, model=None, effort=None, service_tier=_SERVICE_TIER_UNSET):
+    """Return validated (model, effort, service_tier); missing Codex tier means default."""
     if backend not in BACKENDS:
         raise ModelError('Unsupported backend; only mac-codex and mac-claudecode are allowed')
     if model is not None and (not isinstance(model, str) or not model.strip()):
         raise ModelError('model must be nonempty text')
     if effort is not None and (not isinstance(effort, str) or not effort.strip()):
         raise ModelError('effort must be nonempty text')
+    if service_tier is not _SERVICE_TIER_UNSET:
+        if not isinstance(service_tier, str) or not service_tier.strip():
+            raise ModelError('service_tier must be nonempty text')
+        if BACKENDS[backend]['engine'] != 'codex':
+            raise ModelError('service_tier is not supported for ' + backend)
+        if service_tier not in SERVICE_TIERS:
+            raise ModelError('service_tier must be one of: ' + ', '.join(SERVICE_TIERS))
+    else:
+        service_tier = 'default' if BACKENDS[backend]['engine'] == 'codex' else None
     if BACKENDS[backend]['engine'] == 'claude':
         if effort is not None:
             raise ModelError('effort is not supported for mac-claudecode')
         if model is None:
-            return None, None
+            return None, None, service_tier
         if _CLAUDE['model_mode'] == 'switch':
             if not SWITCH_MODEL_RE.fullmatch(model):
                 raise ModelError('model must be a valid switch-helper selector (1..80 characters)')
-            return model, None
+            return model, None, service_tier
         if not CLAUDE_MODEL_RE.fullmatch(model):
             raise ModelError('Invalid Claude model name (1..80 of A-Z a-z 0-9 . _ - [ ])')
-        return model, None
+        return model, None, service_tier
     if model is not None and ':' in model:
         model, _, suffix = model.partition(':')
         if effort is not None and effort != suffix:
@@ -101,7 +112,7 @@ def normalize_selection(backend, model=None, effort=None):
         raise ModelError('Unknown Codex model; allowed: ' + ', '.join(sorted(models)))
     if effort is not None and model is not None and effort not in models[model]:
         raise ModelError(f'{model} supports effort: ' + ', '.join(models[model]))
-    return model, effort
+    return model, effort, service_tier
 
 
 def _claude_script(model):
@@ -124,10 +135,10 @@ def _claude_script(model):
     return ''.join(parts)
 
 
-def command_for(backend, session_id=None, model=None, effort=None):
+def command_for(backend, session_id=None, model=None, effort=None, service_tier=_SERVICE_TIER_UNSET):
     if not isinstance(backend, str) or backend not in BACKENDS:
         raise ValueError('Unsupported backend; only mac-codex and mac-claudecode are allowed')
-    model, effort = normalize_selection(backend, model, effort)
+    model, effort, service_tier = normalize_selection(backend, model, effort, service_tier)
     if backend == 'mac-claudecode':
         if _CLAUDE['model_mode'] == 'switch' and model is not None and not _CLAUDE.get('switch_helper'):
             raise ValueError('claude.model_mode = "switch" needs claude.switch_helper')
@@ -142,6 +153,7 @@ def command_for(backend, session_id=None, model=None, effort=None):
     args = [b['entry'], 'exec', '--skip-git-repo-check', '--json',
             '--sandbox', _CODEX['sandbox'], '-c', f'approval_policy="{_CODEX["approval_policy"]}"',
             '-C', b['workspace']]
+    args += ['-c', f'service_tier="{service_tier}"']
     if model is not None:
         args += ['-m', model]
     if effort is not None:
