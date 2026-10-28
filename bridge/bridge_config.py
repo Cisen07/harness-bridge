@@ -65,6 +65,11 @@ DEFAULTS = {
         # Each entry: {ip = "<tailnet ip>", tag = "tag:<name>"} or {ip = "...", node = "<magicdns name>"}
         'allowed_sources': [],
     },
+    'tier': {
+        # Routing metadata only; the dispatcher resolves tiers to models.
+        'allowed_tiers': [],
+        'require_explicit_selection': False,
+    },
 }
 
 
@@ -116,6 +121,14 @@ def load():
     if not (host in ipaddress.ip_network('100.64.0.0/10') or
             (str(host) == '127.0.0.1' and allow_loopback)):
         raise ValueError('bind_host must be a tailnet IPv4 address (loopback requires test opt-in)')
+    tier = cfg['tier']
+    if not isinstance(tier, dict):
+        raise ValueError('tier must be a configuration section')
+    if not isinstance(tier['allowed_tiers'], list) or any(
+            not isinstance(t, str) or not t.strip() for t in tier['allowed_tiers']):
+        raise ValueError('tier.allowed_tiers must be a list of nonempty strings')
+    if not isinstance(tier['require_explicit_selection'], bool):
+        raise ValueError('tier.require_explicit_selection must be boolean')
     codex = cfg['codex']
     if codex['sandbox'] not in ('read-only', 'workspace-write', 'danger-full-access'):
         raise ValueError('codex.sandbox must be read-only, workspace-write or danger-full-access')

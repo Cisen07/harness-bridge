@@ -40,6 +40,8 @@ WEBHOOK_CONF = pathlib.Path(_SERVER['webhook_conf'])
 # 'tag': node must carry this ACL tag; 'node': node's MagicDNS name must match (trailing dot ignored).
 # Loaded from config.toml [access].allowed_sources; empty means every request gets 403.
 ALLOWED_SOURCES = CONFIG['access']['rules']
+ALLOWED_TIERS = tuple(CONFIG['tier']['allowed_tiers'])
+REQUIRE_EXPLICIT_SELECTION = CONFIG['tier']['require_explicit_selection']
 LOCK = threading.RLock()
 POOL = concurrent.futures.ThreadPoolExecutor(max_workers=int(_SERVER['max_workers']))
 JOURNAL = pathlib.Path(_SERVER['journal'])
@@ -48,6 +50,7 @@ INTERRUPTED_JOBS = []
 for job in JOBS.values():
     job.setdefault('model', None)
     job.setdefault('effort', None)
+    job.setdefault('tier', None)
     if job['status'] in ('queued', 'running'):
         job.update(status='interrupted', error='Bridge restarted; task was not automatically retried.')
         INTERRUPTED_JOBS.append(job)
@@ -428,8 +431,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if not 0 < length <= MAX_BODY:
                 raise ValueError(f'Body must be 1..{MAX_BODY} bytes')
             data = json.loads(self.rfile.read(length))
-            if not isinstance(data, dict) or set(data) - {'prompt', 'session_id', 'backend', 'model', 'effort'}:
-                raise ValueError('Only prompt, optional session_id, backend, model and effort are accepted')
+            if not isinstance(data, dict) or set(data) - {'prompt', 'session_id', 'backend', 'model', 'effort', 'tier'}:
+                raise ValueError('Only prompt, optional session_id, backend, model, effort and tier are accepted')
             backend = data.get('backend', 'mac-codex')
             if not isinstance(backend, str) or backend not in ('mac-codex', 'mac-claudecode'):
                 return self.reply(400, {'error': 'Unsupported backend; only mac-codex and mac-claudecode are allowed'})
@@ -437,6 +440,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 model, effort = normalize_selection(backend, data.get('model'), data.get('effort'))
             except ModelError as error:
                 return self.reply(400, {'error': str(error)})
+            tier = data.get('tier')
+            if tier is not None:
+                if not isinstance(tier, str) or not tier.strip():
+                    raise ValueError('tier must be nonempty text')
+                tier = tier.strip()
+                if ALLOWED_TIERS and tier not in ALLOWED_TIERS:
+                    return self.reply(400, {'error': 'Unknown tier; allowed: ' + ', '.join(sorted(ALLOWED_TIERS))})
             prompt = data['prompt']
             session = data.get('session_id')
             if not isinstance(prompt, str) or not prompt.strip():
@@ -452,12 +462,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if session and any(x.get('session_id') == session and
                                    x['status'] in ('queued', 'running') for x in JOBS.values()):
                     return self.reply(409, {'error': 'This session_id already has a queued or running job; concurrent resumes are not allowed'})
+                selection = resolve_session_selection(session, backend, model, effort)
+                # A routing tier is metadata, never a model selection. Resolve
+                # session history first so a resume can reuse its explicit model.
+                if selection['model'] is None:
+                    if tier is not None:
+                        return self.reply(400, {'error': 'tier must be resolved to an explicit model by the dispatcher side; '
+                                                         'the bridge does not resolve tiers'})
+                    if REQUIRE_EXPLICIT_SELECTION:
+                        return self.reply(400, {'error': 'an explicit model selection or a session with model history is required'})
                 job_id = str(uuid.uuid4())
                 record = {'job_id': job_id, 'status': 'queued', 'session_id': session,
                           'source': self.source_name,
                           'workspace': BACKENDS[backend]['workspace'], 'backend': backend,
+                          'tier': tier,
                           'created_at': datetime.datetime.now(datetime.timezone.utc).isoformat()}
-                record.update(resolve_session_selection(session, backend, model, effort))
+                record.update(selection)
                 JOBS[job_id] = record
                 save()
                 POOL.submit(run_job, job_id, prompt, session, backend, record['model'], record['effort'])
