@@ -62,3 +62,12 @@ Mac bridge restarts). Delivery remains best-effort and must be backed by compens
 ## P1 shadow routing (record-only)
 SSH `submit` may attach a `shadow` comparison of suggested vs actual tier/engine/model/effort. It never
 changes selection or rejects jobs. See [shadow-routing.md](shadow-routing.md).
+
+## Mac HTTP tier metadata
+
+Only the Mac HTTP bridge accepts optional `tier` routing metadata. SSH submit is
+not aligned with this contract. The dispatcher resolves a label to an explicit
+model; the bridge neither routes by tier nor passes it to the CLI. Any tier
+request needs a request/session model. The optional `[tier]` explicit selection
+guard defaults to false; enabling it also rejects unselected legacy requests.
+The P1 shadow suggestion remains observational and does not satisfy this guard.

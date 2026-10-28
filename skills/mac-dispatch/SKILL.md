@@ -36,6 +36,11 @@ running that CLI on the Mac directly. Report only what the API shows.
    "Write long output (code, logs, reports) to a file under the workspace and give its path. Your final reply must be at most 15 lines: outcome, artifact paths, decisions needed, anything blocked."
    - `model` may be `"slug"` or `"slug:effort"`; `effort` (low|medium|high|xhigh|max|ultra) is mac-codex only.
      Conflicts and unknown models return 400. A resume without model/effort reuses the session's last selection.
+   - Mac HTTP only: optional `tier` is routing metadata, never automatic model selection.
+     Use a fictional label such as `example-tier` only after selecting a model.
+     A tier request requires a request/session model even if `[tier] require_explicit_selection=false`.
+     With that guard true, all jobs need a request/session model; effort alone does not count.
+     Defaults are `allowed_tiers=[]`, guard false. SSH submit is not aligned with this contract.
 3. `GET /jobs/<id>` returns status, result, exit_code, model/effort, model_source, effective_model/effort, warnings.
 4. Up to `max_workers` (default 4) jobs run at once across both backends; a second job on the same session_id gets 409.
 

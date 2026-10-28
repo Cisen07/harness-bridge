@@ -48,3 +48,10 @@ allowed_sources = [
   { ip = "100.x.y.1", tag  = "tag:<dispatcher-tag>", token_files = ["/private/box-current", "/private/box-next"] },        # the dispatcher box (tagged node)
   { ip = "100.x.y.2", node = "<peer-node>.<tailnet>.ts.net", token_files = ["/private/peer-current"] }, # optional: another trusted machine
 ]
+
+[tier]
+# Mac HTTP metadata only; the dispatcher must resolve a tier to an explicit model.
+# Empty accepts any nonempty label, but a tier request still needs a request/session model.
+allowed_tiers = []
+# False preserves legacy requests that use the CLI default model.
+require_explicit_selection = false
