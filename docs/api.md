@@ -7,10 +7,12 @@ Base URL: `http://<mac-tailnet-ip>:<port>` (default port 18542). From the dispat
 `{"ok": true, "backend": "...", "backends": ["mac-codex","mac-claudecode"], "mode": {...}, "host": "<host_label>", "workspace": "..."}`
 
 ## GET /backends
-Per backend: `host`, `account`, `engine`, `workspace`, `supports_model`, `supports_effort`; for `mac-codex` also
+Per backend: `host`, `account`, `engine`, `workspace`, `supports_model`, `supports_effort`, `supports_service_tier`; for `mac-codex` also
 `models` (`{slug: [efforts]}`), `default` (from `~/.codex/config.toml`) and `selector`.
 
-The following tier contract applies only to the Mac HTTP bridge. SSH submit has
+`supports_service_tier` is true for Codex and false for Claude.
+
+The following tier/service_tier contract applies only to the Mac HTTP bridge. SSH submit has
 not been aligned with it. `supports_tier` is not exposed: the bridge records a
 label and never resolves a tier into a backend or model.
 
@@ -22,6 +24,7 @@ Body (JSON, 1..16000 bytes; unknown fields -> 400):
 | `backend` | `mac-codex` (default) \| `mac-claudecode` | |
 | `session_id` | string | must be a session this bridge returned for the same backend; 409 if it already has a queued/running job |
 | `model` | string | Codex: allowlisted slug, optionally `slug:effort`. Claude: `claude --model` name, or a switch-helper selector when `model_mode = "switch"` |
+| `service_tier` | `default` \| `priority` | mac-codex only; exact strings, never inherited; omitted means default |
 | `tier` | string or null | optional routing metadata, trimmed; null means omitted; see selection guard below |
 | `effort` | `low\|medium\|high\|xhigh\|max\|ultra` | mac-codex only; must not conflict with a `:effort` suffix |
 
@@ -38,12 +41,34 @@ session history, even when the guard is false. Otherwise the error is
 The tier is stored on the job, never inherited or passed to the CLI.
 
 With `require_explicit_selection = true`, every job needs that request/history
-model. Effort alone does not count. Session selection is resolved before the guard;
+model. Effort or service_tier alone does not count. Session selection is resolved before the guard;
 a resume with model history is accepted. Without such a model the error is
 `400 {"error":"an explicit model selection or a session with model history is required"}`.
 With the default false, a request without tier or model still uses CLI defaults.
 A resume with neither model nor effort inherits both; an effort-only override
 keeps the historical model, while a model-only override does not inherit effort.
+
+### Codex service tier (Mac HTTP only)
+
+`service_tier` is separate from routing `tier` and model/effort. Codex accepts only
+exact `default` or `priority`. Omission always sends `-c service_tier="default"`,
+including resume, overriding any host-config priority default. It never inherits
+a preceding priority request. Request priority explicitly on every turn that needs it:
+
+```json
+{"backend":"mac-codex","prompt":"Synthetic example","model":"gpt-6-luna","effort":"low","service_tier":"priority"}
+```
+
+`priority` is a resource/service request and may have provider cost implications.
+The field is not an explicit model selection and cannot satisfy the selection guard.
+SSH submit has not been aligned; these fields must not be assumed to work there.
+
+Errors are `400 {"error":"service_tier is not supported for mac-claudecode"}` for
+Claude with either valid string, `400 {"error":"service_tier must be nonempty text"}`
+for explicit null, blank, or non-string values, and
+`400 {"error":"service_tier must be one of: default, priority"}` for other Codex
+strings (including case changes or surrounding whitespace). Type validation occurs
+before the backend check. Claude omission remains valid and adds no CLI tier option.
 
 Response `202 {"job_id": "<uuid>", "status": "queued"}`. Errors: `400 {"error": "..."}` (safe to show), `409`.
 
@@ -54,7 +79,13 @@ Response `202 {"job_id": "<uuid>", "status": "queued"}`. Errors: `400 {"error": 
  "effective_model": "gpt-6-astra", "effective_effort": "medium", "exit_code": 0, "result": "...",
  "warnings": ["..."], "permission_denials": [], "error": null}
 ```
-New job records also include `tier` (null when omitted); old journal entries load it as null.
+New job records also include `tier` (null when omitted), `service_tier` (Codex
+current request/default; Claude null), and `effective_service_tier`. The latter is
+null while queued or if command preparation fails; the worker records the CLI
+override once the command is prepared. **It is not a provider acknowledgement or
+a guarantee that priority service was delivered**, even if the process later fails.
+Old journal entries load tier as null but may lack both service-tier fields;
+consumers must accept missing/null and must not infer a historical default tier.
 
 `model_source`: `request` | `session` (inherited on resume) | `default`. `404` for unknown ids.
 

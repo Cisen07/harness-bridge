@@ -46,7 +46,8 @@ import agent_adapters as A  # noqa: E402
 import codex_bridge as B  # noqa: E402
 
 DEFAULT_CODEX = ['/opt/test/codex', 'exec', '--skip-git-repo-check', '--json',
-                 '--sandbox', 'workspace-write', '-c', 'approval_policy="never"', '-C', str(TMP / 'ws')]
+                 '--sandbox', 'workspace-write', '-c', 'approval_policy="never"', '-C', str(TMP / 'ws'),
+                 '-c', 'service_tier="default"']
 
 
 def whois(name='', tags=None):

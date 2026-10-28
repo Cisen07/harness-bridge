@@ -11,5 +11,8 @@
   "effective_model": "gpt-6.1-sol",
   "effective_effort": "medium",
   "exit_code": 0,
-  "result": "All 42 tests pass. Report: reports/test-run.md"
+  "result": "All 42 tests pass. Report: reports/test-run.md",
+  "tier": "example-tier",
+  "service_tier": "default",
+  "effective_service_tier": "default"
 }
