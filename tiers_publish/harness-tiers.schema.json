@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Harness tiers payload v1",
+  "$comment": "tiers_publish.validation is authoritative: also checks duplicate JSON keys, byte limit, tier uniqueness, weight sum, safe text and trusted capabilities.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "tiers"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "type": "integer"
+    },
+    "notes": {
+      "type": "string",
+      "maxLength": 2048
+    },
+    "tiers": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "$ref": "#/$defs/tier"
+      }
+    }
+  },
+  "$defs": {
+    "tier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "label",
+        "weight_pct",
+        "engine",
+        "model"
+      ],
+      "properties": {
+        "id": {
+          "enum": [
+            "astra",
+            "sol",
+            "deepseek"
+          ]
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "weight_pct": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "engine": {
+          "enum": [
+            "codex",
+            "claude"
+          ]
+        },
+        "model": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.+-]{0,127}$"
+        },
+        "effort": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "engine": {
+                "const": "codex"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "effort"
+            ],
+            "properties": {
+              "effort": {
+                "enum": [
+                  "minimal",
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "max",
+                  "ultra"
+                ]
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "effort": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
